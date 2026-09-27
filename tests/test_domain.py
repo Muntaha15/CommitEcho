@@ -53,11 +53,11 @@ class TestDecisionRevision:
 
 class TestEvidence:
     def test_content_size_limit(self):
-        with pytest.raises(ValueError, match="64 KiB"):
+        with pytest.raises(ValueError, match="4 KiB"):
             Evidence(
                 kind=EvidenceKind.DISCUSSION_SUMMARY,
                 origin=EvidenceOrigin.AGENT_REPORTED,
-                content="x" * 70_000,
+                content="é" * 2049,
             )
 
     def test_valid_evidence(self):

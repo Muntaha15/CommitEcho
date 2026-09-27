@@ -65,6 +65,39 @@ def _head(repo: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("summary,rationale,evidence_content,error", [
+    ("safe", "x" * 65_000, None, "64 KiB"),
+    ("api_key=abcdefghijklmnopqrstuvwxyz", "safe", None, "credential or private path"),
+    ("safe", "See C:\\Users\\alice\\notes.txt", None, "credential or private path"),
+    ("safe", "safe", "password=verylongpassword", "credential or private path"),
+], ids=["record_size", "credential", "private_path", "evidence_credential"])
+def test_prepare_rejects_oversize_and_private_content(tmp_path, summary, rationale, evidence_content, error):
+    from commitecho.application.capture import CaptureService
+    from commitecho.application.prepare import PrepareService
+
+    repo = _make_repo(tmp_path)
+    git, drafts, _ = _open_services(repo)
+    capture = CaptureService(drafts, git)
+    change = capture.begin_change(title="safe", client="test", operation_id="begin")
+    evidence_id = str(uuid.uuid4()) if evidence_content else None
+    result = capture.record_decisions(
+        change_id=change["change_id"], expected_revision=0, operation_id="capture",
+        decisions=[{"problem": "safe", "choice": "safe", "rationale": rationale,
+                    "evidence_ids": [evidence_id] if evidence_id else []}],
+        evidence=[{"evidence_id": evidence_id, "kind": "test_result", "content": evidence_content}]
+        if evidence_id else None,
+    )
+    (repo / "code.py").write_text("pass\n")
+    subprocess.run(["git", "add", "code.py"], cwd=repo, check=True, capture_output=True)
+    with pytest.raises(ValueError, match=error):
+        PrepareService(drafts, git).prepare_commit(
+            change_id=change["change_id"], expected_revision=1,
+            selected_revision_ids=result["revision_ids"], summary=summary, operation_id="prepare",
+        )
+    assert drafts.execute("SELECT count(*) FROM commit_records").fetchone()[0] == 0
+    assert not list((repo / ".commitecho" / "records").glob("*.json"))
+
+
 class TestPrepareVerifyRoundTrip:
     def test_committed_record_tamper_is_not_exact(self, tmp_path, monkeypatch):
         from commitecho.application.capture import CaptureService

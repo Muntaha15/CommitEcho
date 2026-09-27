@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,31 @@ def _now() -> datetime:
 
 
 _ROOT_OID = "0" * 40
+_CREDENTIAL = re.compile(
+    r"(?i)(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|"
+    r"\b(?:api[_-]?key|password|secret|access[_-]?token|auth[_-]?token)\s*[:=]\s*['\"]?\S{8,}|"
+    r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,})\b)"
+)
+_PRIVATE_PATH = re.compile(r"(?i)(?:[A-Z]:\\Users\\|/(?:Users|home)/)[^/\\\s]+")
+
+
+def _check_portable_record(record: CommitRecord) -> None:
+    if len(record.model_dump_json(indent=2).encode("utf-8")) > 65_536:
+        raise ValueError("Portable record exceeds 64 KiB limit")
+
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from strings(item)
+
+    for value in strings(record.model_dump(mode="json")):
+        if _CREDENTIAL.search(value) or _PRIVATE_PATH.search(value):
+            raise ValueError("Portable record may contain a credential or private path; edit the draft before preparing")
 
 
 class IndexChangedError(Exception):
@@ -152,6 +178,7 @@ class PrepareService:
             decisions=revisions,
             evidence=evidence_items,
         )
+        _check_portable_record(record)
 
         # --- Snapshot 2: re-check before writing ------------------------------
         head_oid_after = self._git.head_oid() or _ROOT_OID
@@ -181,8 +208,9 @@ class PrepareService:
         import os, tempfile
 
         record_json = record if isinstance(record, str) else record.model_dump_json(indent=2)
-        record_path = (CommitRecord.model_validate_json(record_json) if isinstance(record, str)
-                       else record).record_path()
+        portable = CommitRecord.model_validate_json(record_json) if isinstance(record, str) else record
+        _check_portable_record(portable)
+        record_path = portable.record_path()
         worktree = self._git.repo_info.worktree_dir
         dest = Path(worktree) / record_path
 

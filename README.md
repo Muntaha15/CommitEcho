@@ -200,6 +200,8 @@ search_history(question="content hash")
 # → returns matching decision summaries; call get_evidence(record_id=...) for the full record and alternatives
 ```
 
+Portable records are limited to 64 KiB, with 4 KiB of inline content per evidence item. Preparation rejects likely credentials and private home paths before writing JSON; edit the draft and retry. This check is best effort, so review the record before committing it.
+
 ---
 
 ## Evaluation
