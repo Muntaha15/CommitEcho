@@ -237,7 +237,6 @@ def rebuild_index(repo: str | None) -> None:
     Scans .commitecho/records/ JSON files reachable from HEAD and populates
     index.sqlite.  Safe to re-run; existing entries are skipped.
     """
-    import subprocess
     git, drafts, index = _get_git_and_dbs(repo)
     info = git.repo_info
 
@@ -247,14 +246,12 @@ def rebuild_index(repo: str | None) -> None:
         return
 
     # Enumerate all commits reachable from HEAD
-    result = subprocess.run(
-        ["git", "log", "--format=%H", head_oid],
-        capture_output=True, text=True,
-        cwd=info.worktree_dir,
-    )
-    if result.returncode:
-        raise click.ClickException(f"Cannot traverse Git history: {result.stderr.strip()}")
-    oids = result.stdout.strip().splitlines()
+    try:
+        oids, coverage = git.reachable_commit_oids(head_oid)
+    except GitError as exc:
+        raise click.ClickException(f"Cannot traverse Git history: {exc}") from exc
+    if coverage == "partial":
+        click.echo("  [warn] Git history is incomplete; index coverage will be partial.")
     click.echo(f"Scanning {len(oids)} commits...")
 
     from datetime import datetime, timezone
@@ -276,13 +273,10 @@ def rebuild_index(repo: str | None) -> None:
             for record_id in record_ids:
                 record_path = f".commitecho/records/{record_id}.json"
                 try:
-                    read_result = subprocess.run(
-                        ["git", "show", f"{oid}:{record_path}"],
-                        capture_output=True, text=True, cwd=info.worktree_dir,
-                    )
-                    if read_result.returncode:
-                        raise ValueError(f"record file not found: {read_result.stderr.strip()}")
-                    raw = read_result.stdout
+                    content = git.read_file_from_commit(oid, record_path)
+                    if content is None:
+                        raise ValueError("record file not found")
+                    raw = content.decode("utf-8")
                     data = json.loads(raw)
                     _validate_record(data, record_id)
                     records.append((record_id, record_path, data, raw))

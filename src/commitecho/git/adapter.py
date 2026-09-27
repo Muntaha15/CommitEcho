@@ -394,3 +394,16 @@ class GitAdapter:
             if "shallow" in err or "missing" in err or "bad object" in err:
                 return [], "partial"
             raise
+
+    def check_ancestry(self, from_oid: str, to_oid: str) -> tuple[bool | None, str | None]:
+        """Return whether from_oid precedes to_oid and their merge base when divergent."""
+        oids, coverage = self.reachable_commit_oids(to_oid)
+        if coverage != "full":
+            return None, None
+        if from_oid in oids:
+            return True, None
+        try:
+            base = _run(["merge-base", from_oid, to_oid], cwd=self._info.worktree_dir)
+        except GitError:
+            base = None  # unrelated histories have no merge base
+        return False, base

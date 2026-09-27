@@ -497,6 +497,30 @@ class TestIndexCLIEntrypoint:
         compared = retrieve.compare_history(from_ref=earlier, to_ref="HEAD", path="src/logger.py")
         assert any(d["record_id"] == record_id for d in compared["decisions"])
 
+    def test_index_and_compare_use_configured_git(self, tmp_path: Path, monkeypatch) -> None:
+        import shutil
+        from click.testing import CliRunner
+        from commitecho.application.retrieve import RetrieveService
+        from commitecho.transports.cli import main
+
+        repo, record_id = self._setup_committed_repo(tmp_path)
+        git_exe = shutil.which("git")
+        assert git_exe
+        empty_path = tmp_path / "empty-path"
+        empty_path.mkdir()
+        monkeypatch.setenv("COMMITECHO_GIT", git_exe)
+        monkeypatch.setenv("PATH", str(empty_path))
+
+        result = CliRunner().invoke(main, ["index", "--repo", str(repo)])
+        assert result.exit_code == 0, result.output
+        git, drafts, index = _open_services(repo)
+        assert index.execute("SELECT 1 FROM indexed_records WHERE record_id = ?", (record_id,)).fetchone()
+        compared = RetrieveService(drafts, index, git).compare_history(
+            from_ref=git.resolve("HEAD^"), to_ref="HEAD"
+        )
+        assert compared["is_ancestor"] is True
+        assert any(d["record_id"] == record_id for d in compared["decisions"])
+
     def test_failed_insert_retries_entire_commit(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
         from commitecho.transports.cli import main

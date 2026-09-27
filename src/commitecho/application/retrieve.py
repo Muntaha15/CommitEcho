@@ -282,9 +282,7 @@ class RetrieveService:
             }
 
         # Check ancestry and find merge base
-        is_ancestor, merge_base = _check_ancestry(
-            from_oid, to_oid, self._git.repo_info.worktree_dir
-        )
+        is_ancestor, merge_base = self._git.check_ancestry(from_oid, to_oid)
         if is_ancestor is False:
             coverage_notes.append(
                 f"{from_ref} ({from_oid[:8]}) is not an ancestor of "
@@ -485,41 +483,6 @@ def _decision_row_to_dict(row: Any) -> dict[str, Any]:
         "code_scope": decision.get("code_scope", {}),
         "predecessor_revision_ids": decision.get("predecessor_revision_ids", []),
     }
-
-
-def _check_ancestry(
-    from_oid: str, to_oid: str, worktree_dir: str
-) -> tuple[bool | None, str | None]:
-    """Return (is_ancestor, merge_base_oid).
-
-    is_ancestor is True if from_oid is an ancestor of to_oid, False otherwise,
-    None if the check fails.
-    """
-    import subprocess
-
-    try:
-        result = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", from_oid, to_oid],
-            capture_output=True,
-            cwd=worktree_dir,
-        )
-        is_ancestor = result.returncode == 0
-    except Exception:
-        return None, None
-
-    merge_base: str | None = None
-    if not is_ancestor:
-        try:
-            mb_result = subprocess.run(
-                ["git", "merge-base", from_oid, to_oid],
-                capture_output=True, text=True,
-                cwd=worktree_dir,
-            )
-            merge_base = mb_result.stdout.strip() or None
-        except Exception:
-            pass
-
-    return is_ancestor, merge_base
 
 
 def _detect_conflicts(decisions: list[dict[str, Any]], git: GitAdapter) -> list[dict[str, Any]]:
