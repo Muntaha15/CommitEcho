@@ -14,7 +14,7 @@ import sqlite3
 from pathlib import Path
 
 # Bump this when the schema changes; migrations are keyed on this value.
-DB_VERSION = 1
+DB_VERSION = 3
 
 _BUSY_TIMEOUT_MS = 5_000  # 5 seconds; avoids indefinite blocking
 

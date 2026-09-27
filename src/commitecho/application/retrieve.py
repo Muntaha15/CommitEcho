@@ -58,6 +58,9 @@ class RetrieveService:
             except Exception as exc:
                 coverage = "partial"
                 coverage_notes.append(f"Cannot resolve at_ref '{at_ref}': {exc}")
+                return {"results": [], "anchor_oid": None, "anchor_ref": at_ref,
+                        "coverage": coverage, "coverage_notes": coverage_notes,
+                        "next_cursor": None}
         else:
             anchor_oid = self._git.head_oid()
             if anchor_oid is None:
@@ -84,6 +87,10 @@ class RetrieveService:
             except Exception as exc:
                 coverage = "partial"
                 coverage_notes.append(f"Cannot enumerate reachable commits: {exc}")
+        if not reachable_oids:
+            return {"results": [], "anchor_oid": anchor_oid, "anchor_ref": at_ref,
+                    "coverage": "partial", "coverage_notes": coverage_notes or
+                    ["No reachable commits could be verified."], "next_cursor": None}
 
         # Check indexing completeness: any reachable commit not in the index?
         if reachable_oids:
@@ -120,7 +127,7 @@ class RetrieveService:
                 ).fetchall()
                 # Apply ancestry filter in Python (SQLite has no reachable-set function)
                 for row in rows:
-                    if not reachable_oids or row["commit_oid"] in reachable_oids:
+                    if row["commit_oid"] in reachable_oids:
                         results.append(_decision_row_to_dict(row))
                 # Apply pagination after filtering
                 results = results[offset: offset + page_size]
@@ -144,7 +151,7 @@ class RetrieveService:
                     (path,),
                 ).fetchall()
                 for row in rows:
-                    if not reachable_oids or row["commit_oid"] in reachable_oids:
+                    if row["commit_oid"] in reachable_oids:
                         results.append(_decision_row_to_dict(row))
                 results = results[offset: offset + page_size]
             except Exception as exc:

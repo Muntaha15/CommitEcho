@@ -36,6 +36,17 @@ def main() -> None:
     """CommitEcho – preserve and recall the decisions behind code changes."""
 
 
+@main.command()
+@click.option("--repo", default=".", show_default=True, help="Path to the Git repository to serve.")
+def serve(repo: str) -> None:
+    """Start the CommitEcho MCP server on stdio for REPO."""
+    import asyncio
+
+    from commitecho.transports.mcp_server import run_server
+
+    asyncio.run(run_server(Path(repo).resolve()))
+
+
 # ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
@@ -237,6 +248,8 @@ def rebuild_index(repo: str | None) -> None:
         capture_output=True, text=True,
         cwd=info.worktree_dir,
     )
+    if result.returncode:
+        raise click.ClickException(f"Cannot traverse Git history: {result.stderr.strip()}")
     oids = result.stdout.strip().splitlines()
     click.echo(f"Scanning {len(oids)} commits...")
 
@@ -250,56 +263,61 @@ def rebuild_index(repo: str | None) -> None:
         if already:
             continue
 
-        now = datetime.now(timezone.utc).isoformat()
-
-        # Always mark the commit as scanned so ancestry queries work correctly
-        # even for commits that carry no CommitEcho records.
+        record_path = "<commit>"
+        failures: list[tuple[str, str]] = []
         try:
+            trailers = git.read_commit_trailers(oid)
+            record_ids = trailers.get("CommitEcho-Record", [])
+            records = []
+            for record_id in record_ids:
+                record_path = f".commitecho/records/{record_id}.json"
+                try:
+                    read_result = subprocess.run(
+                        ["git", "show", f"{oid}:{record_path}"],
+                        capture_output=True, text=True, cwd=info.worktree_dir,
+                    )
+                    if read_result.returncode:
+                        raise ValueError(f"record file not found: {read_result.stderr.strip()}")
+                    raw = read_result.stdout
+                    data = json.loads(raw)
+                    _validate_record(data, record_id)
+                    records.append((record_id, record_path, data, raw))
+                except Exception as exc:
+                    failures.append((record_path, str(exc)))
+            if failures:
+                raise ValueError(f"{len(failures)} invalid record(s)")
+
             parent_oid: str | None = None
             try:
                 parent_oid = git.resolve(f"{oid}^")
             except Exception:
                 pass  # root commit
-            index.execute(
-                "INSERT OR IGNORE INTO indexed_commits "
-                "(commit_oid, repository_id, parent_oid, indexed_at) VALUES (?, ?, ?, ?)",
-                (oid, info.common_dir, parent_oid, now),
-            )
-            index.commit()
+            with index:
+                index.execute(
+                    "INSERT INTO indexed_commits "
+                    "(commit_oid, repository_id, parent_oid, indexed_at) VALUES (?, ?, ?, ?)",
+                    (oid, info.common_dir, parent_oid, datetime.now(timezone.utc).isoformat()),
+                )
+                for record_id, record_path, data, raw in records:
+                    _index_record(index, oid, record_id, record_path, data, raw)
+                index.execute("DELETE FROM index_diagnostics WHERE commit_oid = ?", (oid,))
+            indexed += len(records)
         except Exception as exc:
-            click.echo(f"  [warn] {oid[:8]}: could not mark commit: {exc}")
-            continue
-
-        # Check for CommitEcho-Record trailer
-        trailers = git.read_commit_trailers(oid)
-        record_ids = trailers.get("CommitEcho-Record", [])
-        if not record_ids:
-            continue
-
-        for record_id in record_ids:
-            record_path = f".commitecho/records/{record_id}.json"
-            # Read the record blob from the commit tree
-            read_result = subprocess.run(
-                ["git", "show", f"{oid}:{record_path}"],
-                capture_output=True, text=True,
-                cwd=info.worktree_dir,
-            )
-            if read_result.returncode != 0:
-                click.echo(f"  [warn] {oid[:8]}: record file not found at {record_path}")
-                continue
-            try:
-                raw = read_result.stdout
-                record_data = json.loads(raw)
-                _index_record(index, oid, record_id, record_path, record_data, raw)
-                indexed += 1
-            except Exception as exc:
-                click.echo(f"  [warn] {oid[:8]}: failed to parse {record_path}: {exc}")
+            with index:
+                for failed_path, error in failures or [(record_path, str(exc))]:
+                    index.execute(
+                        "INSERT OR REPLACE INTO index_diagnostics "
+                        "(commit_oid, record_path, error, observed_at) VALUES (?, ?, ?, ?)",
+                        (oid, failed_path, error, datetime.now(timezone.utc).isoformat()),
+                    )
+                    click.echo(f"  [warn] {oid[:8]}: {failed_path}: {error}")
 
     click.echo(f"Indexed {indexed} new records.")
 
 
 def _index_record(index, commit_oid: str, record_id: str, record_path: str, data: dict, raw: str) -> None:
     from datetime import datetime, timezone
+    _validate_record(data, record_id)
     now = datetime.now(timezone.utc).isoformat()
 
     index.execute(
@@ -342,7 +360,7 @@ def _index_record(index, commit_oid: str, record_id: str, record_path: str, data
             ),
         )
         # Index paths
-        for path in decision.get("paths", []):
+        for path in decision.get("code_scope", {}).get("paths", []):
             index.execute(
                 "INSERT INTO indexed_paths (revision_id, path) VALUES (?, ?)",
                 (rev_id, path),
@@ -357,7 +375,29 @@ def _index_record(index, commit_oid: str, record_id: str, record_path: str, data
                 (rev_id, decision.get("problem", ""), decision.get("choice", ""), decision.get("rationale", "")),
             )
 
-    index.commit()
+
+
+def _validate_record(data: dict, record_id: str) -> None:
+    from uuid import UUID
+
+    from commitecho.domain.models import CommitRecord
+
+    if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1:
+        raise ValueError("unsupported or missing record schema version")
+    if data.get("record_id") != record_id:
+        raise ValueError("record ID does not match commit trailer")
+    if str(UUID(record_id)) != record_id:
+        raise ValueError("record ID is not a canonical UUID")
+    for field in ("change_id", "summary", "prepared_for", "decisions", "evidence", "created_at"):
+        if field not in data:
+            raise ValueError(f"missing record field: {field}")
+    for decision in data["decisions"]:
+        if "decision_id" not in decision or "revision_id" not in decision:
+            raise ValueError("decision identity is missing")
+    for evidence in data["evidence"]:
+        if "evidence_id" not in evidence:
+            raise ValueError("evidence identity is missing")
+    CommitRecord.model_validate(data)
 
 
 # ---------------------------------------------------------------------------

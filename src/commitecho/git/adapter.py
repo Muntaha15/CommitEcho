@@ -142,8 +142,14 @@ class StagedEntry:
     new_mode: str
 
 
-# SHA of the Git empty tree object — stable across all repositories.
-_EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+def _empty_tree_oid(repo_info: RepoInfo) -> str:
+    result = subprocess.run(
+        [_git_exe(), "hash-object", "-t", "tree", "--stdin"],
+        input=b"", capture_output=True, cwd=repo_info.worktree_dir,
+    )
+    if result.returncode:
+        raise GitError(f"Cannot hash empty tree: {result.stderr.decode(errors='replace')}")
+    return result.stdout.decode().strip()
 
 
 def read_staged_changes(repo_info: RepoInfo) -> list[StagedEntry]:
@@ -154,16 +160,13 @@ def read_staged_changes(repo_info: RepoInfo) -> list[StagedEntry]:
     """
     head_oid = get_head_oid(repo_info)
     if head_oid is None:
-        # Root commit: diff against the canonical empty tree SHA.
+        # Root commit: diff against this repository's empty tree.
         # ``--root`` is not accepted as a tree-ish by diff-index.
-        args = ["diff-index", "--cached", "--raw", "-z", _EMPTY_TREE_SHA]
+        args = ["diff-index", "--cached", "--raw", "-z", _empty_tree_oid(repo_info)]
     else:
         args = ["diff-index", "--cached", "--raw", "-z", "HEAD"]
 
-    try:
-        raw = _run(args, cwd=repo_info.worktree_dir)
-    except GitError:
-        return []
+    raw = _run(args, cwd=repo_info.worktree_dir)
 
     if not raw:
         return []
@@ -291,6 +294,8 @@ class GitAdapter:
             text=True,
             cwd=self._info.worktree_dir,
         )
+        if result.returncode:
+            raise GitError(f"Cannot parse commit trailers: {result.stderr.strip()}")
         trailers: dict[str, list[str]] = {}
         for line in result.stdout.splitlines():
             if ": " in line:
@@ -300,14 +305,24 @@ class GitAdapter:
 
     def file_exists_in_commit(self, oid: str, path: str) -> bool:
         """Check whether *path* exists in the tree of commit *oid*."""
-        try:
-            result = _run(
-                ["ls-tree", "--name-only", oid, "--", path],
-                cwd=self._info.worktree_dir,
-            )
-            return bool(result.strip())
-        except GitError:
-            return False
+        result = _run(
+            ["ls-tree", "--name-only", oid, "--", path],
+            cwd=self._info.worktree_dir,
+        )
+        return bool(result.strip())
+
+    def read_file_from_commit(self, oid: str, path: str) -> bytes | None:
+        """Read a committed file; return None only when the path is absent."""
+        if not self.file_exists_in_commit(oid, path):
+            return None
+        result = subprocess.run(
+            [_git_exe(), "show", f"{oid}:{path}"],
+            cwd=self._info.worktree_dir,
+            capture_output=True,
+        )
+        if result.returncode:
+            raise GitError(f"Cannot read committed file {path}: {result.stderr.decode(errors='replace')}")
+        return result.stdout
 
     def staged_entries_for_commit(self, commit_oid: str) -> list[StagedEntry]:
         """Return the diff entries introduced by *commit_oid* vs its parent.
@@ -315,24 +330,16 @@ class GitAdapter:
         For root commits (no parent), diffs against the empty tree.
         Uses diff-tree so this works on any reachable commit, not only HEAD.
         """
-        try:
-            parent = _run(
-                ["rev-parse", "--verify", f"{commit_oid}^"],
-                cwd=self._info.worktree_dir,
-            )
-        except GitError:
-            parent = None  # root commit
-
-        empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-        base = parent if parent else empty_tree
+        parents = _run(["rev-list", "--parents", "-n", "1", commit_oid],
+                       cwd=self._info.worktree_dir).split()
+        if not parents or parents[0] != commit_oid:
+            raise GitError(f"Cannot read parents of commit {commit_oid}")
+        base = parents[1] if len(parents) > 1 else _empty_tree_oid(self._info)
         # -r recurses into subtrees so we get blob-level entries, matching
         # what diff-index --cached produces for staged changes.
         args = ["diff-tree", "--raw", "-r", "-z", base, commit_oid]
 
-        try:
-            raw = _run(args, cwd=self._info.worktree_dir)
-        except GitError:
-            return []
+        raw = _run(args, cwd=self._info.worktree_dir)
 
         if not raw:
             return []

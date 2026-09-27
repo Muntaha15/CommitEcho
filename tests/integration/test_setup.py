@@ -12,6 +12,8 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -167,6 +169,46 @@ def test_server_command_with_spaces_stored_as_single_element(tmp_path: Path) -> 
     assert stored_cmd == spaced_exe, (
         f"Executable with spaces was mangled: expected {spaced_exe!r}, got {stored_cmd!r}"
     )
+
+
+def test_setup_command_launches_mcp_server(tmp_path: Path) -> None:
+    """The generated command must complete a real stdio MCP handshake."""
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    env = os.environ.copy()
+    source = str(Path(__file__).resolve().parents[2] / "src")
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [source, env.get("PYTHONPATH")]))
+
+    subprocess.run(
+        [sys.executable, "-m", "commitecho", "setup", "--client", "codex", "--repo", str(tmp_path)],
+        check=True, capture_output=True, text=True, env=env,
+    )
+    profile = ALL_PROFILES["codex"]
+    config = json.loads((tmp_path / profile.mcp_config_path).read_text(encoding="utf-8"))
+    entry = config[profile.mcp_servers_key]["commitecho"]
+    assert entry["args"] == ["-m", "commitecho", "serve", "--repo", str(tmp_path)]
+
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-03-26", "capabilities": {},
+            "clientInfo": {"name": "commitecho-test", "version": "1"},
+        }},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    ]
+    process = subprocess.Popen(
+        [entry["command"], *entry["args"]], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+    )
+    stdout, stderr = process.communicate(
+        "".join(json.dumps(request) + "\n" for request in requests), timeout=15,
+    )
+    responses = {item["id"]: item for line in stdout.splitlines()
+                 if "id" in (item := json.loads(line))}
+    assert process.returncode == 0, stderr
+    assert responses[1]["result"]["serverInfo"]["name"] == "commitecho"
+    assert {tool["name"] for tool in responses[2]["result"]["tools"]} >= {
+        "begin_change", "prepare_commit", "verify_commit", "search_history",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -66,6 +66,49 @@ def _head(repo: Path) -> str:
 
 
 class TestPrepareVerifyRoundTrip:
+    def test_committed_record_tamper_is_not_exact(self, tmp_path, monkeypatch):
+        from commitecho.application.capture import CaptureService
+        from commitecho.application.prepare import PrepareService
+        from commitecho.application.verify import VerifyService
+
+        repo = _make_repo(tmp_path)
+        git, drafts, index = _open_services(repo)
+        capture = CaptureService(drafts, git)
+        begin = capture.begin_change(title="tamper test", client="test", operation_id=str(uuid.uuid4()))
+        result = capture.record_decisions(
+            change_id=begin["change_id"], expected_revision=0,
+            operation_id=str(uuid.uuid4()),
+            decisions=[{"problem": "p", "choice": "c", "rationale": "r"}],
+        )
+        (repo / "code.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "code.py"], cwd=repo, check=True, capture_output=True)
+        prep = PrepareService(drafts, git).prepare_commit(
+            change_id=begin["change_id"], expected_revision=1,
+            selected_revision_ids=result["revision_ids"], summary="summary",
+            operation_id=str(uuid.uuid4()),
+        )
+        record_path = repo / prep["record_path"]
+        record_path.write_text(record_path.read_text().replace('"summary": "summary"',
+                                                             '"summary": "changed"'))
+        subprocess.run(["git", "add", prep["record_path"]], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", f"change\n\n{prep['trailer']}"],
+                       cwd=repo, check=True, capture_output=True)
+        verification = VerifyService(drafts, index, git).verify_commit(commit_oid=_head(repo))
+        assert verification["outcome"] == "declared_changed"
+
+        clone = tmp_path / "clone"
+        subprocess.run(["git", "clone", str(repo), str(clone)], check=True, capture_output=True)
+        clone_git, clone_drafts, clone_index = _open_services(clone)
+        verification = VerifyService(clone_drafts, clone_index, clone_git).verify_commit(
+            commit_oid=_head(clone))
+        assert verification["outcome"] == "exact"
+        assert verification["details"]["local_preparation_verified"] is False
+        def fail_read(*_args):
+            raise OSError("object read failed")
+        monkeypatch.setattr(clone_git, "read_file_from_commit", fail_read)
+        assert VerifyService(clone_drafts, clone_index, clone_git).verify_commit(
+            commit_oid=_head(clone))["outcome"] == "unverifiable"
+
     def test_exact_binding(self, tmp_path):
         """prepare_commit followed by a real Git commit produces outcome=exact."""
         from commitecho.application.capture import CaptureService

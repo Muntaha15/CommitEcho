@@ -103,7 +103,7 @@ def _index_commits(repo: Path, git: GitAdapter, index, *commit_oids: str) -> Non
 
 
 class TestTemporalScoping:
-    def test_search_at_earlier_commit_excludes_later_records(self, tmp_path):
+    def test_search_at_earlier_commit_excludes_later_records(self, tmp_path, monkeypatch):
         """Records committed after at_ref must not appear in search results."""
         from commitecho.application.capture import CaptureService
         from commitecho.application.prepare import PrepareService
@@ -203,6 +203,15 @@ class TestTemporalScoping:
         problems_b = [d["problem"] for d in result_b["results"]]
         assert any("rate" in p.lower() for p in problems_b), \
             f"Expected rate decision at B, got: {problems_b}"
+
+        invalid = retrieve.search_history(question="rate", at_ref="does-not-exist")
+        assert invalid["results"] == [] and invalid["coverage"] == "partial"
+
+        def failed_history(*_args, **_kwargs):
+            raise RuntimeError("Git history unavailable")
+        monkeypatch.setattr(git3, "reachable_commit_oids", failed_history)
+        unavailable = retrieve.search_history(question="rate", at_ref=commit_b)
+        assert unavailable["results"] == [] and unavailable["coverage"] == "partial"
 
 
 # ---------------------------------------------------------------------------

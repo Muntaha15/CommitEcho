@@ -39,7 +39,6 @@ def upsert_repository(conn: sqlite3.Connection, repo: Repository) -> None:
         """,
         (repo.installation_id, repo.common_dir, repo.portable_project_id, _now()),
     )
-    conn.commit()
 
 
 def get_repository_by_common_dir(conn: sqlite3.Connection, common_dir: str) -> Repository | None:
@@ -77,7 +76,6 @@ def insert_session(conn: sqlite3.Connection, session: Session, repository_id: st
             session.created_at.isoformat(),
         ),
     )
-    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +103,6 @@ def insert_change(conn: sqlite3.Connection, change: Change, repository_id: str) 
             change.updated_at.isoformat(),
         ),
     )
-    conn.commit()
 
 
 def update_change_status(
@@ -115,15 +112,14 @@ def update_change_status(
         "UPDATE changes SET status = ?, updated_at = ? WHERE change_id = ?",
         (status.value, _now(), change_id),
     )
-    conn.commit()
 
 
-def update_change_revision_counter(conn: sqlite3.Connection, change_id: str, counter: int) -> None:
-    conn.execute(
-        "UPDATE changes SET revision_counter = ?, updated_at = ? WHERE change_id = ?",
-        (counter, _now(), change_id),
-    )
-    conn.commit()
+def update_change_revision_counter(conn: sqlite3.Connection, change_id: str, expected: int) -> bool:
+    return conn.execute(
+        "UPDATE changes SET revision_counter = revision_counter + 1, updated_at = ? "
+        "WHERE change_id = ? AND revision_counter = ?",
+        (_now(), change_id, expected),
+    ).rowcount == 1
 
 
 def get_change(conn: sqlite3.Connection, change_id: str) -> Change | None:
@@ -156,7 +152,6 @@ def link_session_to_change(conn: sqlite3.Connection, change_id: str, session_id:
         "INSERT OR IGNORE INTO change_sessions (change_id, session_id) VALUES (?, ?)",
         (change_id, session_id),
     )
-    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +181,6 @@ def insert_evidence(
             evidence.verification_method,
         ),
     )
-    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +217,6 @@ def insert_decision_revision(
             "INSERT OR IGNORE INTO revision_predecessors (revision_id, predecessor_id) VALUES (?, ?)",
             (revision.revision_id, pred_id),
         )
-    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -236,8 +229,9 @@ def insert_commit_record(conn: sqlite3.Connection, record: CommitRecord) -> None
         """
         INSERT INTO commit_records
             (record_id, change_id, summary, parent_oid, object_format, manifest_version,
-             code_manifest_sha256, selected_revision_ids, evidence_ids, schema_version, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             code_manifest_sha256, selected_revision_ids, evidence_ids, schema_version, created_at,
+             record_sha256, record_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record.record_id,
@@ -251,9 +245,10 @@ def insert_commit_record(conn: sqlite3.Connection, record: CommitRecord) -> None
             json.dumps([e.evidence_id for e in record.evidence]),
             record.schema_version,
             record.created_at.isoformat(),
+            hashlib.sha256(record.model_dump_json(indent=2).encode("utf-8")).hexdigest(),
+            record.model_dump_json(indent=2),
         ),
     )
-    conn.commit()
 
 
 def get_commit_record(conn: sqlite3.Connection, record_id: str) -> dict[str, Any] | None:
@@ -270,8 +265,8 @@ def get_commit_record(conn: sqlite3.Connection, record_id: str) -> dict[str, Any
 
 def check_operation(
     conn: sqlite3.Connection, operation_id: str, tool: str, payload: dict[str, Any]
-) -> bool:
-    """Return True if this operation was already processed with the same payload.
+) -> dict[str, Any] | None:
+    """Return the original response for a matching completed operation.
 
     Raises ValueError if the same operation_id was used with a different payload.
     """
@@ -280,21 +275,30 @@ def check_operation(
     ).hexdigest()
 
     row = conn.execute(
-        "SELECT payload_hash FROM operation_log WHERE operation_id = ?", (operation_id,)
+        "SELECT tool, payload_hash, response_json FROM operation_log WHERE operation_id = ?", (operation_id,)
     ).fetchone()
 
     if row is None:
-        conn.execute(
-            "INSERT INTO operation_log (operation_id, tool, repository_id, payload_hash, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (operation_id, tool, payload.get("repository_id", ""), payload_hash, _now()),
-        )
-        conn.commit()
-        return False
+        return None
 
-    if row["payload_hash"] != payload_hash:
+    if row["tool"] != tool or row["payload_hash"] != payload_hash:
         raise ValueError(
             f"Operation ID '{operation_id}' was already used with a different payload. "
             "Use a new operation ID for a different request."
         )
-    return True  # idempotent replay
+    return json.loads(row["response_json"])
+
+
+def record_operation(
+    conn: sqlite3.Connection, operation_id: str, tool: str,
+    payload: dict[str, Any], response: dict[str, Any],
+) -> None:
+    """Store a successful mutation and its response in the caller's transaction."""
+    payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    conn.execute(
+        "INSERT INTO operation_log "
+        "(operation_id, tool, repository_id, payload_hash, response_json, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (operation_id, tool, payload.get("repository_id", ""), payload_hash,
+         json.dumps(response), _now()),
+    )

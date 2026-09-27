@@ -1,6 +1,6 @@
 """CommitEcho MCP server – all 8 tools exposed over local stdio.
 
-Launch via: python -m commitecho --repo /path/to/repo
+Launch via: python -m commitecho serve --repo /path/to/repo
 or configured as an MCP stdio server in client config.
 
 stdout is reserved for the MCP protocol; all logging goes to stderr.

@@ -31,6 +31,7 @@ from commitecho.storage.repository import (
     update_change_revision_counter,
     upsert_repository,
     check_operation,
+    record_operation,
 )
 
 
@@ -67,65 +68,40 @@ class CaptureService:
         payload = {
             "title": title,
             "client": client,
-            "operation_id": operation_id,
+            "client_version": client_version,
+            "native_session_id": native_session_id,
+            "prior_change_id": prior_change_id,
             "repository_id": repo_info.common_dir,
+            "worktree_id": repo_info.worktree_id,
         }
-
-        # Idempotency check
-        already_done = check_operation(self._conn, operation_id, "begin_change", payload)
-
-        # Ensure repository is registered
-        repo = get_repository_by_common_dir(self._conn, repo_info.common_dir)
-        if repo is None:
-            repo = Repository(common_dir=repo_info.common_dir)
-            upsert_repository(self._conn, repo)
-
-        # Resume a prior change if requested
-        if prior_change_id:
-            change = get_change(self._conn, prior_change_id)
-            if change is None:
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            replay = check_operation(self._conn, operation_id, "begin_change", payload)
+            if replay is not None:
+                return replay
+            repo = get_repository_by_common_dir(self._conn, repo_info.common_dir)
+            if repo is None:
+                repo = Repository(common_dir=repo_info.common_dir)
+                upsert_repository(self._conn, repo)
+            change = get_change(self._conn, prior_change_id) if prior_change_id else None
+            if prior_change_id and change is None:
                 raise ValueError(f"Prior change '{prior_change_id}' not found.")
-            if change.status == ChangeStatus.COMMITTED:
-                raise ValueError(
-                    f"Change '{prior_change_id}' is already committed and cannot be reopened."
-                )
-        elif already_done:
-            # Find the most recently opened change for this operation replay
-            row = self._conn.execute(
-                "SELECT change_id FROM changes WHERE title = ? ORDER BY created_at DESC LIMIT 1",
-                (title,),
-            ).fetchone()
-            change = get_change(self._conn, row["change_id"]) if row else None
+            if change is not None and change.status == ChangeStatus.COMMITTED:
+                raise ValueError(f"Change '{prior_change_id}' is already committed and cannot be reopened.")
             if change is None:
-                raise RuntimeError("Idempotent replay but change record not found.")
-        else:
-            change = None
-
-        if change is None:
-            head_oid = self._git.head_oid()
-            change = Change(
-                title=title,
-                worktree_id=repo_info.worktree_id,
-                starting_revision=head_oid,
-            )
-            insert_change(self._conn, change, repo.installation_id)
-
-        # Register session
-        session = Session(
-            client=client,
-            client_version=client_version,
-            native_session_id=native_session_id,
-            worktree_id=repo_info.worktree_id,
-        )
-        insert_session(self._conn, session, repo.installation_id)
-        link_session_to_change(self._conn, change.change_id, session.session_id)
-
-        return {
-            "change_id": change.change_id,
-            "session_id": session.session_id,
-            "base_oid": change.starting_revision,
-            "revision_counter": change.revision_counter,
-        }
+                change = Change(title=title, worktree_id=repo_info.worktree_id,
+                                starting_revision=self._git.head_oid())
+                insert_change(self._conn, change, repo.installation_id)
+            session = Session(client=client, client_version=client_version,
+                              native_session_id=native_session_id,
+                              worktree_id=repo_info.worktree_id)
+            insert_session(self._conn, session, repo.installation_id)
+            link_session_to_change(self._conn, change.change_id, session.session_id)
+            response = {"change_id": change.change_id, "session_id": session.session_id,
+                        "base_oid": change.starting_revision,
+                        "revision_counter": change.revision_counter}
+            record_operation(self._conn, operation_id, "begin_change", payload, response)
+            return response
 
     # ------------------------------------------------------------------
     # record_decisions
@@ -147,30 +123,28 @@ class CaptureService:
         """
         payload = {
             "change_id": change_id,
-            "operation_id": operation_id,
             "expected_revision": expected_revision,
+            "decisions": decisions,
+            "evidence": evidence or [],
         }
-        already_done = check_operation(self._conn, operation_id, "record_decisions", payload)
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            replay = check_operation(self._conn, operation_id, "record_decisions", payload)
+            if replay is not None:
+                return replay
+            change = get_change(self._conn, change_id)
+            if change is None:
+                raise ValueError(f"Change '{change_id}' not found.")
+            if change.revision_counter != expected_revision:
+                raise ValueError(
+                    f"Optimistic conflict: expected revision {expected_revision}, "
+                    f"actual {change.revision_counter}. Reload and retry."
+                )
+            return self._record_decisions(change_id, expected_revision, operation_id,
+                                          payload, decisions, evidence)
 
-        change = get_change(self._conn, change_id)
-        if change is None:
-            raise ValueError(f"Change '{change_id}' not found.")
-        if change.revision_counter != expected_revision and not already_done:
-            raise ValueError(
-                f"Optimistic conflict: expected revision {expected_revision}, "
-                f"actual {change.revision_counter}. Reload and retry."
-            )
-
-        if already_done:
-            # Return stored revision IDs
-            rows = self._conn.execute(
-                "SELECT revision_id FROM decision_revisions WHERE change_id = ? ORDER BY captured_at",
-                (change_id,),
-            ).fetchall()
-            return {
-                "revision_ids": [r["revision_id"] for r in rows],
-                "revision_counter": change.revision_counter,
-            }
+    def _record_decisions(self, change_id, expected_revision, operation_id,
+                          payload, decisions, evidence):
 
         # Persist evidence items first so IDs are available
         ev_objects: list[Evidence] = []
@@ -185,8 +159,6 @@ class CaptureService:
             )
             insert_evidence(self._conn, ev, change_id)
             ev_objects.append(ev)
-
-        ev_by_local_id = {ev.evidence_id: ev for ev in ev_objects}
 
         revision_ids: list[str] = []
         for dec_data in decisions:
@@ -219,10 +191,12 @@ class CaptureService:
             insert_decision_revision(self._conn, revision, change_id)
             revision_ids.append(revision.revision_id)
 
-        new_counter = change.revision_counter + 1
-        update_change_revision_counter(self._conn, change_id, new_counter)
-
-        return {
+        new_counter = expected_revision + 1
+        if not update_change_revision_counter(self._conn, change_id, expected_revision):
+            raise ValueError("Optimistic conflict: change revision moved. Reload and retry.")
+        response = {
             "revision_ids": revision_ids,
             "revision_counter": new_counter,
         }
+        record_operation(self._conn, operation_id, "record_decisions", payload, response)
+        return response

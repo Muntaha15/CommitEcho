@@ -63,7 +63,7 @@ commitecho verify <commit_oid>
 commitecho verify <commit_oid> --record-id <record_id>
 ```
 
-Returns one of `exact`, `declared_changed`, `contained_only`, `unverifiable`, or `invalid` and explains why. Exact verification currently needs the local draft database.
+Returns one of `exact`, `declared_changed`, `contained_only`, `unverifiable`, or `invalid` and explains why. `exact` means the committed record, trailer, parent, and code fingerprint agree. When the local draft exists, verification also compares the committed bytes with the prepared digest; `details.local_preparation_verified` reports that stronger check. A fresh clone can establish a self-consistent `exact` binding, but cannot authenticate the original preparation or the truth of the rationale.
 
 ### Show a record
 
@@ -231,7 +231,8 @@ Compares the information present in git diff/blame, stored excerpts, and CommitE
 ### Run all tests (including eval scenarios as pytest)
 
 ```bash
-pytest
+python -m pip install -e ".[test]"
+python -m pytest
 ```
 
 Build fixtures first to include the fixture-based evaluations.

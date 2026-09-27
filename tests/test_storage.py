@@ -9,6 +9,7 @@ from commitecho.storage.db import open_drafts_db, open_index_db
 from commitecho.storage.migrations import apply_migrations
 from commitecho.storage.repository import (
     check_operation,
+    record_operation,
     get_change,
     get_repository_by_common_dir,
     insert_change,
@@ -108,18 +109,18 @@ class TestChangeStorage:
 
 class TestOperationIdempotency:
     def test_new_operation(self, mem_db):
-        # Need a repository row for operation_log
         payload = {"repository_id": "r1", "title": "t"}
         already = check_operation(mem_db, "op-001", "begin_change", payload)
-        assert already is False
+        assert already is None
+        assert mem_db.execute("SELECT COUNT(*) FROM operation_log").fetchone()[0] == 0
 
     def test_same_operation_same_payload(self, mem_db):
         payload = {"repository_id": "r1", "title": "t"}
-        check_operation(mem_db, "op-002", "begin_change", payload)
+        record_operation(mem_db, "op-002", "begin_change", payload, {"change_id": "c1"})
         already = check_operation(mem_db, "op-002", "begin_change", payload)
-        assert already is True
+        assert already == {"change_id": "c1"}
 
     def test_same_operation_different_payload_raises(self, mem_db):
-        check_operation(mem_db, "op-003", "begin_change", {"repository_id": "r1", "title": "a"})
+        record_operation(mem_db, "op-003", "begin_change", {"repository_id": "r1", "title": "a"}, {})
         with pytest.raises(ValueError, match="different payload"):
             check_operation(mem_db, "op-003", "begin_change", {"repository_id": "r1", "title": "b"})

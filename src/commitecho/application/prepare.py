@@ -22,6 +22,7 @@ from commitecho.storage.repository import (
     check_operation,
     get_change,
     insert_commit_record,
+    record_operation,
     update_change_status,
 )
 
@@ -64,56 +65,42 @@ class PrepareService:
         Raises IndexChangedError if HEAD or the staged index moves between the
         initial snapshot and the moment the record is written.
         """
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            response, record = self._prepare_commit(
+                change_id, expected_revision, selected_revision_ids, summary, operation_id
+            )
+        # A committed preparation can survive a crash before this write. A replay
+        # restores the same bytes from commit_records.record_json.
+        self._write_record_file(record)
+        return response
+
+    def _prepare_commit(self, change_id, expected_revision, selected_revision_ids,
+                        summary, operation_id):
         payload = {
             "change_id": change_id,
-            "operation_id": operation_id,
             "expected_revision": expected_revision,
+            "selected_revision_ids": selected_revision_ids,
+            "summary": summary,
         }
-        already_done = check_operation(self._conn, operation_id, "prepare_commit", payload)
+        replay = check_operation(self._conn, operation_id, "prepare_commit", payload)
+        if replay is not None:
+            row = self._conn.execute(
+                "SELECT record_json FROM commit_records WHERE record_id = ?",
+                (replay["record_id"],),
+            ).fetchone()
+            if row is None or row["record_json"] is None:
+                raise RuntimeError("Prepared record missing for completed operation.")
+            return replay, row["record_json"]
 
         change = get_change(self._conn, change_id)
         if change is None:
             raise ValueError(f"Change '{change_id}' not found.")
-        if change.revision_counter != expected_revision and not already_done:
+        if change.revision_counter != expected_revision:
             raise ValueError(
                 f"Optimistic conflict: expected revision {expected_revision}, "
                 f"actual {change.revision_counter}."
             )
-
-        # Idempotent replay: return the original record's path without re-writing.
-        if already_done:
-            orig_row = self._conn.execute(
-                "SELECT record_id, code_manifest_sha256 FROM commit_records "
-                "WHERE change_id = ? ORDER BY created_at DESC LIMIT 1",
-                (change_id,),
-            ).fetchone()
-            if orig_row is None:
-                raise RuntimeError(
-                    "Idempotent replay of prepare_commit but no commit_record found for "
-                    f"change '{change_id}'."
-                )
-            orig_id = orig_row["record_id"]
-            orig_digest = orig_row["code_manifest_sha256"]
-            orig_record = CommitRecord.__new__(CommitRecord)
-            # Reconstruct a minimal object just to derive path/trailer from the original ID.
-            # We use model_construct to bypass validation — all we need are the two ID fields.
-            orig_record = CommitRecord.model_construct(
-                record_id=orig_id,
-                change_id=change_id,
-            )
-            staged_before = self._git.staged_changes()
-            staged_paths = {
-                e.path for e in staged_before
-                if not e.path.startswith(_COMMITECHO_RECORD_PREFIX)
-            }
-            return {
-                "record_id": orig_id,
-                "record_path": orig_record.record_path(),
-                "trailer": orig_record.trailer(),
-                "staged_paths": sorted(staged_paths),
-                "uncovered_paths": [],
-                "code_manifest_sha256": orig_digest,
-            }
 
         # Fetch the selected decision revisions
         revisions: list[DecisionRevision] = []
@@ -171,11 +158,10 @@ class PrepareService:
                 "Stage your changes again and retry with a new operation_id."
             )
         # ----------------------------------------------------------------------
-        self._write_record_file(record)
         insert_commit_record(self._conn, record)
         update_change_status(self._conn, change_id, ChangeStatus.PREPARED)
 
-        return {
+        response = {
             "record_id": record.record_id,
             "record_path": record.record_path(),
             "trailer": record.trailer(),
@@ -183,17 +169,22 @@ class PrepareService:
             "uncovered_paths": uncovered,
             "code_manifest_sha256": digest_before,
         }
+        record_operation(self._conn, operation_id, "prepare_commit", payload, response)
+        return response, record
 
-    def _write_record_file(self, record: CommitRecord) -> None:
+    def _write_record_file(self, record: CommitRecord | str) -> None:
         """Write the record JSON to the worktree, atomically."""
         import os, tempfile
 
+        record_json = record if isinstance(record, str) else record.model_dump_json(indent=2)
+        record_path = (CommitRecord.model_validate_json(record_json) if isinstance(record, str)
+                       else record).record_path()
         worktree = self._git.repo_info.worktree_dir
-        dest = Path(worktree) / record.record_path()
+        dest = Path(worktree) / record_path
 
         if dest.exists():
             existing = dest.read_bytes()
-            new_bytes = record.model_dump_json(indent=2).encode()
+            new_bytes = record_json.encode("utf-8")
             if existing != new_bytes:
                 raise RuntimeError(
                     f"Record file already exists at {dest} with different content. "
@@ -217,8 +208,8 @@ class PrepareService:
         # Atomic write via temp file + rename
         fd, tmp_path = tempfile.mkstemp(dir=dest.parent, prefix=".commitecho_tmp_")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(record.model_dump_json(indent=2))
+            with os.fdopen(fd, "wb") as f:
+                f.write(record_json.encode("utf-8"))
             Path(tmp_path).rename(dest)
         except Exception:
             try:
