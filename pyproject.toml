@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "commitecho"
+version = "0.1.0"
+description = "Preserve the decisions behind code changes and recall them through your coding agent."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=1.9.0",
+    "pydantic>=2.9.0",
+    "click>=8.1.0",
+]
+
+[project.scripts]
+commitecho = "commitecho.transports.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/commitecho"]
+
+[tool.hatch.envs.default]
+dependencies = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+src = ["src"]
+target-version = "py312"
+line-length = 100

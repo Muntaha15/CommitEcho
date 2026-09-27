@@ -1,0 +1,257 @@
+# CommitEcho
+
+Preserve the decisions behind code changes and recall them through your coding agent.
+
+CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
+
+**Status: v0.1.0 implementation in progress.** The local MCP server, CLI, storage, Git adapter, fixtures, and automated tests exist. Real client workflow validation and release gates are still pending.
+
+## Architecture documents
+
+- [Architecture](docs/architecture.md): components, data model, commit linkage, retrieval, and failure behavior.
+- [Agent integrations](docs/integrations.md): Codex, Antigravity IDE, and GitHub Copilot in VS Code; documented capabilities and validation gates.
+- [Product scope and delivery](docs/product-and-delivery.md): differentiation, milestones, effort assumptions, and evaluation.
+- [Technical notes](docs/technical-notes.md): implementation walkthrough, data flow, limitations, and maintenance guide.
+
+---
+
+## Install
+
+```bash
+pip install .
+```
+
+Or, with [uv](https://github.com/astral-sh/uv) (recommended):
+
+```bash
+uv pip install .
+```
+
+Requires Python 3.12+ and Git 2.34+. No external service or model API is needed.
+
+---
+
+## CLI quick-start
+
+### Initialise a repository
+
+```bash
+commitecho init
+```
+
+Creates `.commitecho/config.json` and `.commitecho/records/` in the worktree. Private `drafts.sqlite` and rebuildable `index.sqlite` live under the Git common directory's `commitecho/` folder. Run once per clone.
+
+### Health check
+
+```bash
+commitecho doctor
+```
+
+Checks Git discovery, Python, SQLite FTS5, the MCP package, database access, and whether client skill/config files are present. It does not test a live client connection.
+
+### Check status
+
+```bash
+commitecho status
+# or for a specific change:
+commitecho status --change-id <change_id>
+```
+
+### Index committed records
+
+```bash
+commitecho index
+```
+
+Walks commits reachable from `HEAD`, reads records referenced by `CommitEcho-Record` trailers, and populates the search index. Run after cloning or pulling new commits.
+
+### Verify a commit binding
+
+```bash
+commitecho verify <commit_oid>
+commitecho verify <commit_oid> --record-id <record_id>
+```
+
+Returns one of `exact`, `declared_changed`, `contained_only`, `unverifiable`, or `invalid` and explains why. Exact verification currently needs the local draft database; see [technical notes](docs/technical-notes.md).
+
+### Show a record
+
+```bash
+commitecho show <record_id>
+```
+
+### Browse decision history across a range
+
+```bash
+commitecho diff main feature/my-branch
+commitecho diff main feature/my-branch --path src/api_client.py
+```
+
+### Export a record
+
+```bash
+commitecho export <change_id>
+commitecho export <change_id> --output decisions.json
+```
+
+### Set up a client
+
+```bash
+commitecho setup --client codex
+commitecho setup --client antigravity
+commitecho setup --client copilot_vscode
+# dry-run (shows what would be written):
+commitecho setup --client codex --dry-run
+```
+
+Without `--client`, setup configures all three profiles. It writes the MCP server config and shared skill; Codex and Copilot also receive an activation instruction block. Antigravity currently receives no persistent rule from setup. Dry-run lists planned changes rather than a file diff. Test the generated configuration in your client before relying on automatic capture.
+
+---
+
+## MCP server (agent transport)
+
+Start the server so your coding agent can connect to it:
+
+```bash
+python -m commitecho serve --repo .
+```
+
+Or, when invoked by a client that manages its own process lifecycle:
+
+```bash
+commitecho setup --client codex   # writes the correct command into .codex/mcp.json
+```
+
+The server exposes eight MCP tools:
+
+| Tool | Description |
+|---|---|
+| `begin_change` | Open or resume a Change for the current worktree |
+| `record_decisions` | Persist one or more decision revisions for a Change |
+| `prepare_commit` | Snapshot staged changes and write a CommitRecord to `.commitecho/records/` |
+| `search_history` | Retrieve decisions by question or file path |
+| `verify_commit` | Check a commit's declared record binding |
+| `get_evidence` | Fetch a stored evidence item or indexed record |
+| `compare_history` | Compare decisions introduced between two Git refs |
+| `get_status` | Inspect open changes and index coverage |
+
+---
+
+## Client setup
+
+### Codex (local)
+
+After running `commitecho setup --client codex` the following files are written (or merged):
+
+| File | Purpose |
+|---|---|
+| `.codex/mcp.json` | Registers the `commitecho` MCP server entry |
+| `.codex/skills/commitecho.md` | Shared capture/recall skill |
+| `.codex/AGENTS.md` | Activation instruction block |
+
+### Antigravity IDE
+
+```bash
+commitecho setup --client antigravity
+```
+
+| File | Purpose |
+|---|---|
+| `.agents/mcp_config.json` | Registers the `commitecho` MCP server entry |
+| `.agents/skills/commitecho.md` | Shared capture/recall skill |
+
+### GitHub Copilot in VS Code
+
+```bash
+commitecho setup --client copilot_vscode
+```
+
+| File | Purpose |
+|---|---|
+| `.vscode/mcp.json` | Registers the `commitecho` MCP server entry |
+| `.agents/skills/commitecho.md` | Shared capture/recall skill |
+| `.github/copilot-instructions.md` | Activation instruction block (appended) |
+
+---
+
+## Typical workflow
+
+```
+# 1. Agent begins a change
+begin_change(title="fix retry storms", client="codex", operation_id="<new-uuid>")
+# → returns change_id, session_id
+
+# 2. Agent records the chosen approach + rejected alternatives
+record_decisions(change_id=..., expected_revision=0, operation_id="<new-uuid>", decisions=[
+  { problem: "duplicate uploads on retry",
+    choice: "content hash deduplication",
+    rationale: "same bytes → same job ID; rename-safe",
+    disposition: "selected",
+    alternatives: [{ choice: "filename dedup", disposition: "rejected",
+                     reason: "renames bypass it" }] }
+])
+
+# 3. Agent stages files, then prepares a record
+prepare_commit(change_id=..., expected_revision=1, operation_id="<new-uuid>", selected_revision_ids=[...],
+               summary="Deduplicate by content hash")
+# → writes .commitecho/records/<uuid>.json
+# → returns trailer: "CommitEcho-Record: <uuid>"
+
+# 4. Developer commits (includes record file + trailer)
+git add .commitecho/records/<uuid>.json
+git commit -m "fix: content hash dedup
+
+CommitEcho-Record: <uuid>"
+
+# 5. Months later, in a different session or clone:
+commitecho index       # rebuild search index
+search_history(question="content hash")
+# → returns matching decision summaries; call get_evidence(record_id=...) for the full record and alternatives
+```
+
+---
+
+## Evaluation
+
+### Build fixture repos
+
+```bash
+python tests/fixtures/build_fixtures.py
+```
+
+Creates six tiny Git repos under `tests/fixtures/repos/` covering: chosen/rejected decision, later reversal, branch conflict, partial staging, stale preparation, and never-recorded rationale.
+
+### Run the eval suite
+
+```bash
+python tests/evals/eval_runner.py
+```
+
+Reports three fixture metrics per scenario: **capture completeness**, **linkage correctness**, and **retrieval recall@5**. These deterministic fixtures do not measure live agent capture fidelity.
+
+### Run the three-baseline comparison
+
+```bash
+python tests/evals/baseline_comparison.py
+```
+
+Compares the information present in git diff/blame, stored excerpts, and CommitEcho structured recall on the same question set. It does not invoke an LLM or measure answer quality.
+
+### Run all tests (including eval scenarios as pytest)
+
+```bash
+pytest
+```
+
+Build fixtures first to include the fixture-based evaluations.
+
+---
+
+## Release gates
+
+These are target release gates, not a claim that the current build has passed them:
+
+1. **Zero false `exact` results in fixtures** — `commitecho verify` on the `stale_preparation` fixture returns `declared_changed`, not `exact`.
+2. **All records recover in a fresh full clone** — `commitecho index` on a clone of any fixture repo populates the search index and `search_history` returns the expected decisions.
+3. **No branch/future-decision leakage** — `search_history` at a given `at_ref` does not surface decisions from commits unreachable from that ref.
+4. **All three client workflows pass with recorded versions** — `commitecho setup --client <client>` for each of `codex`, `antigravity`, `copilot_vscode` produces valid config files and the 7-step acceptance scenario passes.
