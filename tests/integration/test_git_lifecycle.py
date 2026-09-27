@@ -132,4 +132,5 @@ class TestCaptureServiceIntegration:
             ],
         )
         assert len(rev_result["revision_ids"]) == 1
+        assert len(rev_result["evidence_ids"]) == 1
         assert rev_result["revision_counter"] == 1

@@ -8,3 +8,4 @@ dist/
 tests/fixtures/repos/
 tests/fixtures/fixture_manifest.json
 docs/
+AUDIT_ACTIONS.md

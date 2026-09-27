@@ -150,6 +150,7 @@ class CaptureService:
         ev_objects: list[Evidence] = []
         for ev_data in (evidence or []):
             ev = Evidence(
+                **({"evidence_id": ev_data["evidence_id"]} if "evidence_id" in ev_data else {}),
                 kind=EvidenceKind(ev_data["kind"]),
                 origin=EvidenceOrigin(ev_data.get("origin", "agent_reported")),
                 content=ev_data.get("content"),
@@ -162,6 +163,15 @@ class CaptureService:
 
         revision_ids: list[str] = []
         for dec_data in decisions:
+            referenced_ids = set(dec_data.get("evidence_ids", []))
+            for alternative in dec_data.get("alternatives", []):
+                referenced_ids.update(alternative.get("evidence_ids", []))
+            for ev_id in referenced_ids:
+                row = self._conn.execute(
+                    "SELECT change_id FROM evidence WHERE evidence_id = ?", (ev_id,)
+                ).fetchone()
+                if row is None or row["change_id"] != change_id:
+                    raise ValueError(f"Evidence '{ev_id}' does not belong to change '{change_id}'.")
             alts = [
                 Alternative(
                     choice=a["choice"],
@@ -196,6 +206,7 @@ class CaptureService:
             raise ValueError("Optimistic conflict: change revision moved. Reload and retry.")
         response = {
             "revision_ids": revision_ids,
+            "evidence_ids": [ev.evidence_id for ev in ev_objects],
             "revision_counter": new_counter,
         }
         record_operation(self._conn, operation_id, "record_decisions", payload, response)

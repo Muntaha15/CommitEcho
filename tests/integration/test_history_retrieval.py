@@ -97,6 +97,57 @@ def _index_commits(repo: Path, git: GitAdapter, index, *commit_oids: str) -> Non
                 _index_record(index, oid, record_id, record_path, json.loads(r.stdout), r.stdout)
 
 
+def test_evidence_links_survive_prepare_and_clone(tmp_path):
+    from commitecho.application.capture import CaptureService
+    from commitecho.application.prepare import PrepareService
+    from commitecho.application.retrieve import RetrieveService
+
+    repo = _make_repo(tmp_path)
+    git, drafts, _ = _open_services(repo)
+    capture = CaptureService(drafts, git)
+    change = capture.begin_change(title="evidence", client="test", operation_id="begin")
+    evidence_id = str(uuid.uuid4())
+    decision = {"problem": "retry safety", "choice": "dedupe", "rationale": "same input",
+                "alternatives": [{"choice": "ignore", "evidence_ids": [evidence_id]}]}
+
+    with pytest.raises(ValueError, match="does not belong"):
+        capture.record_decisions(change_id=change["change_id"], expected_revision=0,
+                                 operation_id="missing", decisions=[decision])
+
+    result = capture.record_decisions(
+        change_id=change["change_id"], expected_revision=0, operation_id="capture",
+        decisions=[decision],
+        evidence=[{"evidence_id": evidence_id, "kind": "test_result", "origin": "agent_reported",
+                   "content": "retry produced one result"}],
+    )
+    assert result["evidence_ids"] == [evidence_id]
+
+    other = capture.begin_change(title="other", client="test", operation_id="other")
+    with pytest.raises(ValueError, match="does not belong"):
+        capture.record_decisions(change_id=other["change_id"], expected_revision=0,
+                                 operation_id="foreign", decisions=[decision])
+
+    (repo / "code.py").write_text("pass\n")
+    subprocess.run(["git", "add", "code.py"], cwd=repo, check=True)
+    prepared = PrepareService(drafts, git).prepare_commit(
+        change_id=change["change_id"], expected_revision=1,
+        selected_revision_ids=result["revision_ids"], summary="retry safety", operation_id="prepare")
+    portable = json.loads((repo / prepared["record_path"]).read_text())
+    assert [e["evidence_id"] for e in portable["evidence"]] == [evidence_id]
+    subprocess.run(["git", "add", prepared["record_path"]], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", f"retry safety\n\n{prepared['trailer']}"],
+                   cwd=repo, check=True, capture_output=True)
+
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(repo), str(clone)], check=True, capture_output=True)
+    clone_git, clone_drafts, clone_index = _open_services(clone)
+    _index_commits(clone, clone_git, clone_index, _head(clone))
+    retrieve = RetrieveService(clone_drafts, clone_index, clone_git)
+    found = retrieve.search_history(question="retry")
+    assert evidence_id in found["results"][0]["evidence_ids"]
+    assert retrieve.get_evidence(evidence_id=evidence_id)["content"] == "retry produced one result"
+
+
 # ---------------------------------------------------------------------------
 # Temporal scoping
 # ---------------------------------------------------------------------------

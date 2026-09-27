@@ -116,13 +116,16 @@ class PrepareService:
         all_ev_ids: set[str] = set()
         for rev in revisions:
             all_ev_ids.update(rev.evidence_ids)
+            for alternative in rev.alternatives:
+                all_ev_ids.update(alternative.evidence_ids)
         evidence_items: list[Evidence] = []
         for ev_id in all_ev_ids:
             row = self._conn.execute(
-                "SELECT * FROM evidence WHERE evidence_id = ?", (ev_id,)
+                "SELECT * FROM evidence WHERE evidence_id = ? AND change_id = ?", (ev_id, change_id)
             ).fetchone()
-            if row:
-                evidence_items.append(_row_to_evidence(row))
+            if row is None:
+                raise ValueError(f"Evidence '{ev_id}' does not belong to change '{change_id}'.")
+            evidence_items.append(_row_to_evidence(row))
 
         # --- Snapshot 1: freeze HEAD and index digest -------------------------
         head_oid_before = self._git.head_oid() or _ROOT_OID

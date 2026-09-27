@@ -116,7 +116,7 @@ class RetrieveService:
                 rows = self._index.execute(
                     """
                     SELECT d.revision_id, d.decision_id, d.record_id, d.disposition,
-                           d.problem, d.choice, d.rationale, r.commit_oid, r.summary
+                           d.problem, d.choice, d.rationale, r.commit_oid, r.summary, r.raw_json
                     FROM decisions_fts f
                     JOIN indexed_decisions d ON d.revision_id = f.revision_id
                     JOIN indexed_records r ON r.record_id = d.record_id
@@ -141,7 +141,7 @@ class RetrieveService:
                 rows = self._index.execute(
                     """
                     SELECT d.revision_id, d.decision_id, d.record_id, d.disposition,
-                           d.problem, d.choice, d.rationale, r.commit_oid, r.summary
+                           d.problem, d.choice, d.rationale, r.commit_oid, r.summary, r.raw_json
                     FROM indexed_paths p
                     JOIN indexed_decisions d ON d.revision_id = p.revision_id
                     JOIN indexed_records r ON r.record_id = d.record_id
@@ -196,7 +196,12 @@ class RetrieveService:
                     "client": row["client"],
                     "observed_at": row["observed_at"],
                 }
-            # Also try the index evidence stored in raw_json
+            # ponytail: linear scan; add an evidence index if clone lookups become slow.
+            for record in self._index.execute("SELECT record_id, commit_oid, raw_json FROM indexed_records"):
+                for item in json.loads(record["raw_json"]).get("evidence", []):
+                    if item["evidence_id"] == evidence_id:
+                        return {"found": True, "source": "index", "record_id": record["record_id"],
+                                "commit_oid": record["commit_oid"], **item}
             return {"found": False, "evidence_id": evidence_id}
 
         if record_id:
@@ -294,7 +299,7 @@ class RetrieveService:
             placeholders = ",".join("?" * len(range_set))
             rows = self._index.execute(
                 f"""
-                SELECT r.record_id, r.commit_oid, r.summary,
+                SELECT r.record_id, r.commit_oid, r.summary, r.raw_json,
                        d.revision_id, d.decision_id, d.disposition,
                        d.problem, d.choice, d.rationale
                 FROM indexed_records r
@@ -403,6 +408,11 @@ class RetrieveService:
 
 
 def _decision_row_to_dict(row: Any) -> dict[str, Any]:
+    decision = next((d for d in json.loads(row["raw_json"])["decisions"]
+                     if d["revision_id"] == row["revision_id"]), {})
+    evidence_ids = set(decision.get("evidence_ids", []))
+    for alternative in decision.get("alternatives", []):
+        evidence_ids.update(alternative.get("evidence_ids", []))
     return {
         "revision_id": row["revision_id"],
         "decision_id": row["decision_id"],
@@ -413,6 +423,7 @@ def _decision_row_to_dict(row: Any) -> dict[str, Any]:
         "problem": row["problem"],
         "choice": row["choice"],
         "rationale": row["rationale"],
+        "evidence_ids": sorted(evidence_ids),
     }
 
 
