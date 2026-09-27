@@ -106,10 +106,11 @@ class PrepareService:
         revisions: list[DecisionRevision] = []
         for rev_id in selected_revision_ids:
             row = self._conn.execute(
-                "SELECT * FROM decision_revisions WHERE revision_id = ?", (rev_id,)
+                "SELECT * FROM decision_revisions WHERE revision_id = ? AND change_id = ?",
+                (rev_id, change_id),
             ).fetchone()
             if row is None:
-                raise ValueError(f"Decision revision '{rev_id}' not found.")
+                raise ValueError(f"Decision revision '{rev_id}' does not belong to change '{change_id}'.")
             revisions.append(_row_to_revision(self._conn, row))
 
         # Fetch evidence referenced by any selected revision

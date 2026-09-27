@@ -61,6 +61,29 @@ def _open_capture(repo: Path):
 
 
 class TestIdempotentRetry:
+    def test_change_ownership_for_prepare_and_worktree_resume(self, tmp_path):
+        repo = _make_repo(tmp_path)
+        svc = _open_capture(repo)
+        first = svc.begin_change(title="first", client="test", operation_id="first")
+        second = svc.begin_change(title="second", client="test", operation_id="second")
+        revision_id = svc.record_decisions(
+            change_id=second["change_id"], expected_revision=0, operation_id="revision",
+            decisions=[{"problem": "p", "choice": "c", "rationale": "r"}],
+        )["revision_ids"][0]
+        prep = PrepareService(svc._conn, svc._git)
+        with pytest.raises(ValueError, match="does not belong to change"):
+            prep.prepare_commit(change_id=first["change_id"], expected_revision=0,
+                                selected_revision_ids=[revision_id], summary="foreign",
+                                operation_id="foreign-prepare")
+
+        other = tmp_path / "other-worktree"
+        subprocess.run(["git", "worktree", "add", "-b", "other", str(other)],
+                       cwd=repo, capture_output=True, check=True)
+        other_svc = _open_capture(other)
+        with pytest.raises(ValueError, match="another worktree"):
+            other_svc.begin_change(title="resume", client="test", operation_id="resume",
+                                   prior_change_id=first["change_id"])
+
     def test_failed_capture_can_retry_without_partial_rows(self, tmp_path):
         svc = _open_capture(_make_repo(tmp_path))
         change_id = svc.begin_change(title="failure", client="test", operation_id="begin")["change_id"]

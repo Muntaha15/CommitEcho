@@ -86,6 +86,8 @@ class CaptureService:
             change = get_change(self._conn, prior_change_id) if prior_change_id else None
             if prior_change_id and change is None:
                 raise ValueError(f"Prior change '{prior_change_id}' not found.")
+            if change is not None and change.worktree_id != repo_info.worktree_id:
+                raise ValueError(f"Change '{prior_change_id}' belongs to another worktree.")
             if change is not None and change.status == ChangeStatus.COMMITTED:
                 raise ValueError(f"Change '{prior_change_id}' is already committed and cannot be reopened.")
             if change is None:
