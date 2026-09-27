@@ -15,7 +15,7 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import CallToolResult, Tool, TextContent
 from pydantic import BaseModel, Field
 
 from commitecho.git.adapter import GitAdapter, GitError
@@ -136,18 +136,18 @@ def create_server(repo_path: str | Path) -> Server:
         return _TOOL_DEFINITIONS
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent] | CallToolResult:
         from commitecho.application.prepare import IndexChangedError
         try:
             result = await _dispatch(name, arguments, capture, prepare, verify, retrieve)
             return [TextContent(type="text", text=json.dumps(result, default=str))]
         except IndexChangedError as exc:
-            return [TextContent(type="text", text=json.dumps({"error": str(exc), "error_code": "INDEX_CHANGED", "is_error": True}))]
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc), "error_code": "INDEX_CHANGED"}))], isError=True)
         except (ValueError, TypeError) as exc:
-            return [TextContent(type="text", text=json.dumps({"error": str(exc), "is_error": True}))]
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], isError=True)
         except Exception as exc:
             print(f"[commitecho] Unexpected error in {name}: {exc}", file=sys.stderr)
-            return [TextContent(type="text", text=json.dumps({"error": str(exc), "is_error": True}))]
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], isError=True)
 
     return server
 
