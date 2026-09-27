@@ -8,8 +8,9 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from commitecho.domain.models import BindingOutcome, CommitRecord
+from commitecho.domain.models import BindingOutcome, ChangeStatus, CommitRecord
 from commitecho.git.adapter import GitAdapter, build_code_manifest, fingerprint_manifest
+from commitecho.storage.repository import update_change_status
 
 
 class VerifyService:
@@ -25,6 +26,7 @@ class VerifyService:
         *,
         commit_oid: str,
         record_id: str | None = None,
+        keep_open: bool = False,
     ) -> dict[str, Any]:
         """Evaluate the binding between a commit and its CommitEcho record.
 
@@ -203,6 +205,18 @@ class VerifyService:
             ),
         )
         self._index_conn.commit()
+
+        if outcome == BindingOutcome.EXACT and draft_row is not None:
+            with self._conn:
+                pending = self._conn.execute(
+                    "SELECT 1 FROM changes WHERE change_id = ? AND status = 'prepared' "
+                    "AND ? = (SELECT record_id FROM commit_records WHERE change_id = ? "
+                    "ORDER BY rowid DESC LIMIT 1)",
+                    (record.change_id, record.record_id, record.change_id),
+                ).fetchone()
+                if pending:
+                    update_change_status(self._conn, record.change_id,
+                                         ChangeStatus.OPEN if keep_open else ChangeStatus.COMMITTED)
 
         return result
 

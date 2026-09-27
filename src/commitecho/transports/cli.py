@@ -218,6 +218,10 @@ def status(repo: str | None, change_id: str | None, as_json: bool) -> None:
             click.echo(f"  [{c['status']:9}] {c['change_id'][:8]}  {c['title']}")
     else:
         click.echo("No open changes.")
+    if result["abandoned_changes"]:
+        click.echo("\nAbandoned changes:")
+        for c in result["abandoned_changes"]:
+            click.echo(f"  {c['change_id'][:8]}  {c['title']}")
 
 
 # ---------------------------------------------------------------------------
@@ -452,14 +456,15 @@ def show(record_id: str, repo: str | None) -> None:
 @main.command()
 @click.argument("commit_oid")
 @click.option("--record-id", default=None)
+@click.option("--keep-open", is_flag=True, help="Keep this change open for another commit.")
 @click.option("--repo", default=None)
-def verify(commit_oid: str, record_id: str | None, repo: str | None) -> None:
+def verify(commit_oid: str, record_id: str | None, keep_open: bool, repo: str | None) -> None:
     """Verify that COMMIT_OID correctly carries its CommitEcho record."""
     from commitecho.application.verify import VerifyService
 
     git, drafts, index = _get_git_and_dbs(repo)
     svc = VerifyService(drafts, index, git)
-    result = svc.verify_commit(commit_oid=commit_oid, record_id=record_id)
+    result = svc.verify_commit(commit_oid=commit_oid, record_id=record_id, keep_open=keep_open)
     click.echo(json.dumps(result, indent=2, default=str))
     if result.get("outcome") != "exact":
         sys.exit(1)

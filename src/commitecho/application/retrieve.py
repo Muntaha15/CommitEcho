@@ -376,7 +376,8 @@ class RetrieveService:
         repo_info = self._git.repo_info
 
         open_changes = []
-        query = "SELECT change_id, title, status, updated_at FROM changes WHERE status != 'committed'"
+        abandoned_changes = []
+        query = "SELECT change_id, title, status, updated_at FROM changes WHERE status IN ('open', 'prepared', 'abandoned')"
         if change_id:
             query += " AND change_id = ?"
             rows = self._drafts.execute(query, (change_id,)).fetchall()
@@ -384,12 +385,13 @@ class RetrieveService:
             rows = self._drafts.execute(query).fetchall()
 
         for row in rows:
-            open_changes.append({
+            item = {
                 "change_id": row["change_id"],
                 "title": row["title"],
                 "status": row["status"],
                 "updated_at": row["updated_at"],
-            })
+            }
+            (abandoned_changes if row["status"] == "abandoned" else open_changes).append(item)
 
         indexed_count = self._index.execute(
             "SELECT COUNT(*) as c FROM indexed_commits"
@@ -411,6 +413,7 @@ class RetrieveService:
             "head_oid": head_oid,
             "head_indexed": head_indexed,
             "open_changes": open_changes,
+            "abandoned_changes": abandoned_changes,
             "indexed_commit_count": indexed_count,
             "coverage": "partial" if (head_oid and not head_indexed) else "full",
         }

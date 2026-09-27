@@ -65,6 +65,55 @@ def _head(repo: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+def test_change_completion_and_multi_commit(tmp_path):
+    from commitecho.application.capture import CaptureService
+    from commitecho.application.prepare import PrepareService
+    from commitecho.application.retrieve import RetrieveService
+    from commitecho.application.verify import VerifyService
+
+    repo = _make_repo(tmp_path)
+    git, drafts, index = _open_services(repo)
+    capture = CaptureService(drafts, git)
+    change_id = capture.begin_change(title="two commits", client="test", operation_id="begin")["change_id"]
+    revisions = capture.record_decisions(
+        change_id=change_id, expected_revision=0, operation_id="decisions",
+        decisions=[{"problem": name, "choice": "do it", "rationale": "needed"}
+                   for name in ("first", "second")],
+    )["revision_ids"]
+    prepare = PrepareService(drafts, git)
+    verify = VerifyService(drafts, index, git)
+    first_oid = None
+
+    for number, keep_open in ((1, True), (2, False)):
+        path = f"code{number}.py"
+        (repo / path).write_text(f"value = {number}\n")
+        subprocess.run(["git", "add", path], cwd=repo, capture_output=True, check=True)
+        prepared = prepare.prepare_commit(
+            change_id=change_id, expected_revision=1,
+            selected_revision_ids=[revisions[number - 1]], summary=f"commit {number}",
+            operation_id=f"prepare-{number}",
+        )
+        if first_oid:
+            assert verify.verify_commit(commit_oid=first_oid)["outcome"] == "exact"
+            assert drafts.execute("SELECT status FROM changes WHERE change_id = ?", (change_id,)).fetchone()[0] == "prepared"
+        subprocess.run(["git", "add", prepared["record_path"]], cwd=repo,
+                       capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", f"commit {number}\n\n{prepared['trailer']}"],
+                       cwd=repo, capture_output=True, check=True)
+        assert verify.verify_commit(commit_oid=_head(repo), keep_open=keep_open)["outcome"] == "exact"
+        if number == 1:
+            first_oid = _head(repo)
+        expected = "open" if keep_open else "committed"
+        assert drafts.execute("SELECT status FROM changes WHERE change_id = ?", (change_id,)).fetchone()[0] == expected
+
+    abandoned_id = capture.begin_change(title="abandoned", client="test", operation_id="abandoned")["change_id"]
+    drafts.execute("UPDATE changes SET status = 'abandoned' WHERE change_id = ?", (abandoned_id,))
+    drafts.commit()
+    status = RetrieveService(drafts, index, git).get_status()
+    assert status["open_changes"] == []
+    assert [c["change_id"] for c in status["abandoned_changes"]] == [abandoned_id]
+
+
 @pytest.mark.parametrize("summary,rationale,evidence_content,error", [
     ("safe", "x" * 65_000, None, "64 KiB"),
     ("api_key=abcdefghijklmnopqrstuvwxyz", "safe", None, "credential or private path"),

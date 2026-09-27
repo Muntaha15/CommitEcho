@@ -61,9 +61,12 @@ Walks commits reachable from `HEAD`, reads records referenced by `CommitEcho-Rec
 ```bash
 commitecho verify <commit_oid>
 commitecho verify <commit_oid> --record-id <record_id>
+commitecho verify <commit_oid> --keep-open  # another commit will follow for this change
 ```
 
 Returns one of `exact`, `declared_changed`, `contained_only`, `unverifiable`, or `invalid` and explains why. `exact` means the committed record, trailer, parent, and code fingerprint agree. When the local draft exists, verification also compares the committed bytes with the prepared digest; `details.local_preparation_verified` reports that stronger check. A fresh clone can establish a self-consistent `exact` binding, but cannot authenticate the original preparation or the truth of the rationale.
+
+An exact local verification closes the prepared change by default. Use `--keep-open` (or MCP `keep_open: true`) for an intermediate commit; it returns the change to `open` so the next commit can use the same change ID. Failed verification leaves it `prepared`. Status lists abandoned changes separately from open work.
 
 ### Show a record
 

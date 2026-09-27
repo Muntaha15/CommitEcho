@@ -77,6 +77,7 @@ class PrepareCommitInput(BaseModel):
 class VerifyCommitInput(BaseModel):
     commit_oid: str = Field(description="Full or resolvable Git commit OID.")
     record_id: str | None = Field(default=None, description="Expected record UUID (optional).")
+    keep_open: bool = Field(default=False, description="Keep this change open for another commit.")
 
 
 class SearchHistoryInput(BaseModel):
@@ -203,6 +204,7 @@ async def _dispatch(
         return verify.verify_commit(
             commit_oid=inp.commit_oid,
             record_id=inp.record_id,
+            keep_open=inp.keep_open,
         )
 
     if name == "search_history":
@@ -336,6 +338,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "properties": {
                 "commit_oid": {"type": "string"},
                 "record_id": {"type": "string"},
+                "keep_open": {"type": "boolean", "default": False},
             },
         },
     ),
