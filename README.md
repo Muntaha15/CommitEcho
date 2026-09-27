@@ -6,15 +6,6 @@ CommitEcho is a local MCP server. During development, your coding agent records 
 
 **Status: v0.1.0 implementation in progress.** The local MCP server, CLI, storage, Git adapter, fixtures, and automated tests exist. Real client workflow validation and release gates are still pending.
 
-## Architecture documents
-
-- [Architecture](docs/architecture.md): components, data model, commit linkage, retrieval, and failure behavior.
-- [Agent integrations](docs/integrations.md): Codex, Antigravity IDE, and GitHub Copilot in VS Code; documented capabilities and validation gates.
-- [Product scope and delivery](docs/product-and-delivery.md): differentiation, milestones, effort assumptions, and evaluation.
-- [Technical notes](docs/technical-notes.md): implementation walkthrough, data flow, limitations, and maintenance guide.
-
----
-
 ## Install
 
 ```bash
@@ -72,7 +63,7 @@ commitecho verify <commit_oid>
 commitecho verify <commit_oid> --record-id <record_id>
 ```
 
-Returns one of `exact`, `declared_changed`, `contained_only`, `unverifiable`, or `invalid` and explains why. Exact verification currently needs the local draft database; see [technical notes](docs/technical-notes.md).
+Returns one of `exact`, `declared_changed`, `contained_only`, `unverifiable`, or `invalid` and explains why. Exact verification currently needs the local draft database.
 
 ### Show a record
 
