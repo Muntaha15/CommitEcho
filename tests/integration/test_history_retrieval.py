@@ -199,7 +199,7 @@ class TestTemporalScoping:
                 "choice": "content hash",
                 "rationale": "avoids rename bypass",
                 "disposition": "selected",
-                "code_scope": {"paths": ["src/uploads.py"]},
+                "code_scope": {"paths": ["src/uploads.py"], "line_ranges": [[3, 5]]},
             }],
         )
         (repo / "src").mkdir(exist_ok=True)
@@ -237,6 +237,7 @@ class TestTemporalScoping:
                 "choice": "token bucket",
                 "rationale": "smooth traffic",
                 "disposition": "selected",
+                "code_scope": {"paths": ["src/rate.py"], "line_ranges": [[10, 20]]},
             }],
         )
         (repo / "src" / "rate.py").write_text("class Bucket: pass\n")
@@ -274,6 +275,26 @@ class TestTemporalScoping:
         problems_b = [d["problem"] for d in result_b["results"]]
         assert any("rate" in p.lower() for p in problems_b), \
             f"Expected rate decision at B, got: {problems_b}"
+
+        assert retrieve.search_history(question="upload", path="src/rate.py")["results"] == []
+        assert len(retrieve.search_history(question="upload", path="src/uploads.py")["results"]) == 1
+        assert len(retrieve.search_history(path="src/uploads.py", line=4)["results"]) == 1
+        assert retrieve.search_history(path="src/uploads.py", line=9)["results"] == []
+        ranged = retrieve.search_history(path="src/rate.py", from_ref=commit_a, to_ref=commit_b)
+        assert [r["commit_oid"] for r in ranged["results"]] == [commit_b]
+        assert retrieve.search_history(path="src/rate.py", from_ref=commit_b,
+                                       to_ref=commit_b)["coverage"] == "full"
+        assert retrieve.search_history(path="src/rate.py", from_ref=commit_b,
+                                       to_ref=commit_b)["results"] == []
+        with pytest.raises(ValueError, match="used together"):
+            retrieve.search_history(path="src/rate.py", from_ref=commit_a)
+        with pytest.raises(ValueError, match="used together"):
+            retrieve.search_history(path="src/rate.py", at_ref=commit_b,
+                                    from_ref=commit_a, to_ref=commit_b)
+        with pytest.raises(ValueError, match="requires path"):
+            retrieve.search_history(question="rate", line=12)
+        assert retrieve.search_history(path="src/rate.py", from_ref="",
+                                       to_ref=commit_b)["coverage"] == "partial"
 
         invalid = retrieve.search_history(question="rate", at_ref="does-not-exist")
         assert invalid["results"] == [] and invalid["coverage"] == "partial"

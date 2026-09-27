@@ -41,25 +41,33 @@ class RetrieveService:
         page_size: int = _DEFAULT_PAGE_SIZE,
         cursor: str | None = None,
     ) -> dict[str, Any]:
-        """Return ranked records matching *question* and/or *path*.
+        """Search the reachable history or the from_ref..to_ref commit range."""
+        if not question and not path:
+            raise ValueError("Provide question or path.")
+        if line is not None and (not path or type(line) is not int or line < 1):
+            raise ValueError("line must be a positive integer and requires path.")
+        if (from_ref is None) != (to_ref is None) or (at_ref is not None and to_ref is not None):
+            raise ValueError("from_ref and to_ref must be used together without at_ref.")
+        if type(page_size) is not int or not 1 <= page_size <= 100:
+            raise ValueError("page_size must be between 1 and 100.")
+        if cursor is not None and (not isinstance(cursor, str) or not cursor.isdecimal() or int(cursor) > 10_000):
+            raise ValueError("cursor must be an offset between 0 and 10000.")
 
-        Scoped to the ancestry of *at_ref* (default: HEAD).
-        Only records whose commit is reachable from *at_ref* are returned.
-        Returns bounded list with explicit cursor and coverage information.
-        """
         # Step 1: Resolve the anchor ref to an immutable OID
         anchor_oid: str | None = None
+        anchor_ref = to_ref if to_ref is not None else at_ref
+        from_oid: str | None = None
         coverage = "full"
         coverage_notes: list[str] = []
 
-        if at_ref:
+        if anchor_ref is not None:
             try:
-                anchor_oid = self._git.resolve(at_ref)
+                anchor_oid = self._git.resolve(anchor_ref)
+                if from_ref is not None:
+                    from_oid = self._git.resolve(from_ref)
             except Exception as exc:
-                coverage = "partial"
-                coverage_notes.append(f"Cannot resolve at_ref '{at_ref}': {exc}")
-                return {"results": [], "anchor_oid": None, "anchor_ref": at_ref,
-                        "coverage": coverage, "coverage_notes": coverage_notes,
+                return {"results": [], "anchor_oid": None, "anchor_ref": anchor_ref,
+                        "coverage": "partial", "coverage_notes": [f"Cannot resolve history ref: {exc}"],
                         "next_cursor": None}
         else:
             anchor_oid = self._git.head_oid()
@@ -67,7 +75,7 @@ class RetrieveService:
                 return {
                     "results": [],
                     "anchor_oid": None,
-                    "anchor_ref": at_ref,
+                    "anchor_ref": anchor_ref,
                     "coverage": "partial",
                     "coverage_notes": ["HEAD is unborn; no commits to search."],
                     "next_cursor": None,
@@ -77,7 +85,7 @@ class RetrieveService:
         reachable_oids: set[str] = set()
         if anchor_oid:
             try:
-                oids, cov = self._git.reachable_commit_oids(anchor_oid)
+                oids, cov = self._git.reachable_commit_oids(anchor_oid, exclude_ref=from_oid)
                 reachable_oids = set(oids)
                 if cov == "partial":
                     coverage = "partial"
@@ -88,9 +96,11 @@ class RetrieveService:
                 coverage = "partial"
                 coverage_notes.append(f"Cannot enumerate reachable commits: {exc}")
         if not reachable_oids:
-            return {"results": [], "anchor_oid": anchor_oid, "anchor_ref": at_ref,
-                    "coverage": "partial", "coverage_notes": coverage_notes or
-                    ["No reachable commits could be verified."], "next_cursor": None}
+            return {"results": [], "anchor_oid": anchor_oid, "anchor_ref": anchor_ref,
+                    "coverage": "full" if from_oid and coverage == "full" else "partial",
+                    "coverage_notes": coverage_notes or
+                    ([] if from_oid else ["No reachable commits could be verified."]),
+                    "next_cursor": None}
 
         # Check indexing completeness: any reachable commit not in the index?
         if reachable_oids:
@@ -106,68 +116,61 @@ class RetrieveService:
                     "Run `commitecho index` to improve coverage."
                 )
 
-        # Step 3: Filter candidate OIDs to the reachable set
+        # Step 3: Match filters before applying bounded pagination.
         results: list[dict[str, Any]] = []
         offset = int(cursor) if cursor else 0
-
+        joins = "JOIN decisions_fts f ON f.revision_id = d.revision_id" if question else ""
+        clauses: list[str] = []
+        params: list[str] = []
         if question:
-            # FTS5 lexical search scoped to reachable commits
-            try:
-                rows = self._index.execute(
-                    """
-                    SELECT d.revision_id, d.decision_id, rd.record_id, d.disposition,
+            clauses.append("decisions_fts MATCH ?")
+            params.append(question)
+        if path:
+            clauses.append("EXISTS (SELECT 1 FROM indexed_paths p WHERE p.revision_id = d.revision_id AND p.path = ?)")
+            params.append(path)
+        ordering = "rank, cr.commit_oid DESC" if question else "cr.commit_oid DESC"
+        try:
+            rows = self._index.execute(
+                f"""SELECT d.revision_id, d.decision_id, rd.record_id, d.disposition,
                            d.problem, d.choice, d.rationale, cr.commit_oid, r.summary, r.raw_json
-                    FROM decisions_fts f
-                    JOIN indexed_decisions d ON d.revision_id = f.revision_id
+                    FROM indexed_decisions d
+                    {joins}
                     JOIN indexed_record_decisions rd ON rd.revision_id = d.revision_id
                     JOIN indexed_records r ON r.record_id = rd.record_id
                     JOIN indexed_commit_records cr ON cr.record_id = r.record_id
-                    WHERE decisions_fts MATCH ?
-                    ORDER BY rank
-                    """,
-                    (question,),
-                ).fetchall()
-                # Apply ancestry filter in Python (SQLite has no reachable-set function)
-                for row in rows:
-                    if row["commit_oid"] in reachable_oids:
-                        results.append(_decision_row_to_dict(row))
-                # Apply pagination after filtering
-                results = results[offset: offset + page_size]
-            except Exception as exc:
-                coverage = "partial"
-                coverage_notes.append(f"FTS search error: {exc}")
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY {ordering}, rd.record_id, d.revision_id""",
+                params,
+            )
+            matched = 0
+            for row in rows:
+                if row["commit_oid"] not in reachable_oids:
+                    continue
+                result = _decision_row_to_dict(row)
+                if line is not None and not any(
+                    start <= line <= end for start, end in result["code_scope"].get("line_ranges") or []
+                ):
+                    continue
+                if matched >= offset:
+                    results.append(result)
+                    if len(results) > page_size:
+                        break
+                matched += 1
+        except Exception as exc:
+            coverage = "partial"
+            coverage_notes.append(f"Search error: {exc}")
 
-        if path and not results:
-            # Path-based lookup scoped to reachable commits
-            try:
-                rows = self._index.execute(
-                    """
-                    SELECT d.revision_id, d.decision_id, rd.record_id, d.disposition,
-                           d.problem, d.choice, d.rationale, cr.commit_oid, r.summary, r.raw_json
-                    FROM indexed_paths p
-                    JOIN indexed_decisions d ON d.revision_id = p.revision_id
-                    JOIN indexed_record_decisions rd ON rd.revision_id = d.revision_id
-                    JOIN indexed_records r ON r.record_id = rd.record_id
-                    JOIN indexed_commit_records cr ON cr.record_id = r.record_id
-                    WHERE p.path = ?
-                    ORDER BY cr.commit_oid DESC
-                    """,
-                    (path,),
-                ).fetchall()
-                for row in rows:
-                    if row["commit_oid"] in reachable_oids:
-                        results.append(_decision_row_to_dict(row))
-                results = results[offset: offset + page_size]
-            except Exception as exc:
-                coverage = "partial"
-                coverage_notes.append(f"Path lookup error: {exc}")
-
-        next_cursor = str(offset + page_size) if len(results) == page_size else None
+        has_more = len(results) > page_size
+        next_cursor = str(offset + page_size) if has_more and offset + page_size <= 10_000 else None
+        if has_more and next_cursor is None:
+            coverage = "partial"
+            coverage_notes.append("Pagination is limited to the first 10000 matches.")
+        results = results[:page_size]
 
         return {
             "results": results,
             "anchor_oid": anchor_oid,
-            "anchor_ref": at_ref,
+            "anchor_ref": anchor_ref,
             "coverage": coverage,
             "coverage_notes": coverage_notes,
             "next_cursor": next_cursor,
@@ -441,6 +444,7 @@ def _decision_row_to_dict(row: Any) -> dict[str, Any]:
         "choice": row["choice"],
         "rationale": row["rationale"],
         "evidence_ids": sorted(evidence_ids),
+        "code_scope": decision.get("code_scope", {}),
     }
 
 

@@ -111,6 +111,18 @@ def test_index_reuses_record_and_revision_across_commits(index_db):
     assert RetrieveService(index_db, index_db, git).get_evidence(
         record_id=records[0].record_id
     )["commit_oids"] == commits
+    retrieve = RetrieveService(index_db, index_db, git)
+    first = retrieve.search_history(question="shared", page_size=1)
+    second = retrieve.search_history(question="shared", page_size=1, cursor=first["next_cursor"])
+    third = retrieve.search_history(question="shared", page_size=1, cursor=second["next_cursor"])
+    assert [r["record_id"] for page in (first, second, third) for r in page["results"]] == [
+        r["record_id"] for r in found["results"]
+    ]
+    assert third["next_cursor"] is None
+    with pytest.raises(ValueError, match="page_size"):
+        retrieve.search_history(question="shared", page_size=101)
+    with pytest.raises(ValueError, match="cursor"):
+        retrieve.search_history(question="shared", cursor="-1")
 
 class TestRepository:
     def test_upsert_and_get(self, mem_db):

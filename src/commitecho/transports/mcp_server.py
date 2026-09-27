@@ -83,12 +83,12 @@ class VerifyCommitInput(BaseModel):
 class SearchHistoryInput(BaseModel):
     question: str | None = Field(default=None, description="Natural-language question.")
     path: str | None = Field(default=None, description="Repository-relative file path.")
-    line: int | None = Field(default=None, description="Line number within the path.")
+    line: int | None = Field(default=None, description="Positive line number; requires path and matches explicit line ranges.")
     at_ref: str | None = Field(default=None, description="Git ref to scope results to (default: HEAD).")
-    from_ref: str | None = Field(default=None, description="Start of a range query.")
-    to_ref: str | None = Field(default=None, description="End of a range query.")
+    from_ref: str | None = Field(default=None, description="Range start, excluded; requires to_ref and cannot be combined with at_ref.")
+    to_ref: str | None = Field(default=None, description="Range end, included; requires from_ref and cannot be combined with at_ref.")
     page_size: int = Field(default=20, ge=1, le=100)
-    cursor: str | None = Field(default=None)
+    cursor: str | None = Field(default=None, description="Result offset, up to 10000; page_size is 1-100.")
 
 
 class GetEvidenceInput(BaseModel):
