@@ -115,11 +115,13 @@ class RetrieveService:
             try:
                 rows = self._index.execute(
                     """
-                    SELECT d.revision_id, d.decision_id, d.record_id, d.disposition,
-                           d.problem, d.choice, d.rationale, r.commit_oid, r.summary, r.raw_json
+                    SELECT d.revision_id, d.decision_id, rd.record_id, d.disposition,
+                           d.problem, d.choice, d.rationale, cr.commit_oid, r.summary, r.raw_json
                     FROM decisions_fts f
                     JOIN indexed_decisions d ON d.revision_id = f.revision_id
-                    JOIN indexed_records r ON r.record_id = d.record_id
+                    JOIN indexed_record_decisions rd ON rd.revision_id = d.revision_id
+                    JOIN indexed_records r ON r.record_id = rd.record_id
+                    JOIN indexed_commit_records cr ON cr.record_id = r.record_id
                     WHERE decisions_fts MATCH ?
                     ORDER BY rank
                     """,
@@ -140,13 +142,15 @@ class RetrieveService:
             try:
                 rows = self._index.execute(
                     """
-                    SELECT d.revision_id, d.decision_id, d.record_id, d.disposition,
-                           d.problem, d.choice, d.rationale, r.commit_oid, r.summary, r.raw_json
+                    SELECT d.revision_id, d.decision_id, rd.record_id, d.disposition,
+                           d.problem, d.choice, d.rationale, cr.commit_oid, r.summary, r.raw_json
                     FROM indexed_paths p
                     JOIN indexed_decisions d ON d.revision_id = p.revision_id
-                    JOIN indexed_records r ON r.record_id = d.record_id
+                    JOIN indexed_record_decisions rd ON rd.revision_id = d.revision_id
+                    JOIN indexed_records r ON r.record_id = rd.record_id
+                    JOIN indexed_commit_records cr ON cr.record_id = r.record_id
                     WHERE p.path = ?
-                    ORDER BY r.commit_oid DESC
+                    ORDER BY cr.commit_oid DESC
                     """,
                     (path,),
                 ).fetchall()
@@ -197,7 +201,10 @@ class RetrieveService:
                     "observed_at": row["observed_at"],
                 }
             # ponytail: linear scan; add an evidence index if clone lookups become slow.
-            for record in self._index.execute("SELECT record_id, commit_oid, raw_json FROM indexed_records"):
+            for record in self._index.execute(
+                "SELECT r.record_id, cr.commit_oid, r.raw_json FROM indexed_records r "
+                "JOIN indexed_commit_records cr ON cr.record_id = r.record_id"
+            ):
                 for item in json.loads(record["raw_json"]).get("evidence", []):
                     if item["evidence_id"] == evidence_id:
                         return {"found": True, "source": "index", "record_id": record["record_id"],
@@ -214,11 +221,16 @@ class RetrieveService:
                     raw = json.loads(row["raw_json"])
                 except Exception:
                     raw = {}
+                commit_oids = [r["commit_oid"] for r in self._index.execute(
+                    "SELECT commit_oid FROM indexed_commit_records WHERE record_id = ? ORDER BY commit_oid",
+                    (record_id,),
+                )]
                 return {
                     "found": True,
                     "source": "index",
                     "record_id": row["record_id"],
-                    "commit_oid": row["commit_oid"],
+                    "commit_oid": commit_oids[0],
+                    "commit_oids": commit_oids,
                     "summary": row["summary"],
                     "record": raw,
                 }
@@ -299,13 +311,15 @@ class RetrieveService:
             placeholders = ",".join("?" * len(range_set))
             rows = self._index.execute(
                 f"""
-                SELECT r.record_id, r.commit_oid, r.summary, r.raw_json,
+                SELECT r.record_id, cr.commit_oid, r.summary, r.raw_json,
                        d.revision_id, d.decision_id, d.disposition,
                        d.problem, d.choice, d.rationale
                 FROM indexed_records r
-                JOIN indexed_decisions d ON d.record_id = r.record_id
-                WHERE r.commit_oid IN ({placeholders})
-                ORDER BY r.commit_oid
+                JOIN indexed_commit_records cr ON cr.record_id = r.record_id
+                JOIN indexed_record_decisions rd ON rd.record_id = r.record_id
+                JOIN indexed_decisions d ON d.revision_id = rd.revision_id
+                WHERE cr.commit_oid IN ({placeholders})
+                ORDER BY cr.commit_oid
                 """,
                 tuple(range_set),
             ).fetchall()

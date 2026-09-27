@@ -193,6 +193,8 @@ DELETE FROM operation_log;
 _INDEX_V3 = """
 -- Rebuild old projections: v1 omitted code_scope.paths and could mark partial
 -- commits complete. The next `commitecho index` repopulates them from Git.
+DROP TABLE IF EXISTS indexed_commit_records;
+DROP TABLE IF EXISTS indexed_record_decisions;
 DELETE FROM indexed_paths;
 DELETE FROM decisions_fts;
 DELETE FROM indexed_decisions;
@@ -207,6 +209,28 @@ CREATE TABLE IF NOT EXISTS index_diagnostics (
 );
 """
 
+_INDEX_V4 = """
+CREATE TABLE IF NOT EXISTS indexed_commit_records (
+    commit_oid TEXT NOT NULL REFERENCES indexed_commits(commit_oid),
+    record_id TEXT NOT NULL REFERENCES indexed_records(record_id),
+    record_path TEXT NOT NULL,
+    PRIMARY KEY (commit_oid, record_id)
+);
+CREATE INDEX IF NOT EXISTS idx_commit_records_record ON indexed_commit_records(record_id);
+CREATE TABLE IF NOT EXISTS indexed_record_decisions (
+    record_id TEXT NOT NULL REFERENCES indexed_records(record_id),
+    revision_id TEXT NOT NULL REFERENCES indexed_decisions(revision_id),
+    PRIMARY KEY (record_id, revision_id)
+);
+CREATE INDEX IF NOT EXISTS idx_record_decisions_revision ON indexed_record_decisions(revision_id);
+-- Old projections could omit repeated associations; rebuild from Git.
+DELETE FROM indexed_paths;
+DELETE FROM decisions_fts;
+DELETE FROM indexed_decisions;
+DELETE FROM indexed_records;
+DELETE FROM indexed_commits;
+"""
+
 # ---------------------------------------------------------------------------
 # Migration runner
 # ---------------------------------------------------------------------------
@@ -218,6 +242,8 @@ _SCHEMAS: dict[tuple[str, int], str] = {
     ("index", 2): _INDEX_V2,
     ("drafts", 3): _DRAFTS_V3,
     ("index", 3): _INDEX_V3,
+    ("drafts", 4): "SELECT 1;",
+    ("index", 4): _INDEX_V4,
 }
 
 

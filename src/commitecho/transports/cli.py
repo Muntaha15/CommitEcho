@@ -320,6 +320,12 @@ def _index_record(index, commit_oid: str, record_id: str, record_path: str, data
     _validate_record(data, record_id)
     now = datetime.now(timezone.utc).isoformat()
 
+    existing = index.execute(
+        "SELECT raw_json FROM indexed_records WHERE record_id = ?", (record_id,)
+    ).fetchone()
+    if existing is not None and json.loads(existing["raw_json"]) != data:
+        raise ValueError(f"Record '{record_id}' has different content in another commit")
+
     index.execute(
         """
         INSERT OR IGNORE INTO indexed_records
@@ -337,12 +343,16 @@ def _index_record(index, commit_oid: str, record_id: str, record_path: str, data
             now,
         ),
     )
+    index.execute(
+        "INSERT OR IGNORE INTO indexed_commit_records (commit_oid, record_id, record_path) VALUES (?, ?, ?)",
+        (commit_oid, record_id, record_path),
+    )
 
     for decision in data.get("decisions", []):
         rev_id = decision.get("revision_id", "")
         if not rev_id:
             continue
-        index.execute(
+        inserted = index.execute(
             """
             INSERT OR IGNORE INTO indexed_decisions
                 (revision_id, record_id, decision_id, disposition, problem, choice, rationale, captured_at)
@@ -359,12 +369,17 @@ def _index_record(index, commit_oid: str, record_id: str, record_path: str, data
                 decision.get("captured_at", now),
             ),
         )
+        index.execute(
+            "INSERT OR IGNORE INTO indexed_record_decisions (record_id, revision_id) VALUES (?, ?)",
+            (record_id, rev_id),
+        )
         # Index paths
-        for path in decision.get("code_scope", {}).get("paths", []):
-            index.execute(
-                "INSERT INTO indexed_paths (revision_id, path) VALUES (?, ?)",
-                (rev_id, path),
-            )
+        if inserted.rowcount:
+            for path in decision.get("code_scope", {}).get("paths", []):
+                index.execute(
+                    "INSERT INTO indexed_paths (revision_id, path) VALUES (?, ?)",
+                    (rev_id, path),
+                )
         # FTS5 insert — guard against duplicates (FTS5 has no OR IGNORE)
         fts_exists = index.execute(
             "SELECT 1 FROM decisions_fts WHERE revision_id = ?", (rev_id,)
