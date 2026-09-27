@@ -57,9 +57,9 @@ class RecordDecisionsInput(BaseModel):
             "Evidence items to persist. Each must have: kind, origin, content or locator. "
             "Optional evidence_id lets decisions and alternatives reference same-call evidence; "
             "the response returns every generated evidence ID. "
-            "Kinds: discussion_summary, test_result, code_observation, developer_attestation, "
-            "source_excerpt, external_artifact. "
-            "Origins: agent_reported, developer_confirmed, source_adapter, independent_artifact."
+            "Kinds: discussion_summary, test_result, code_observation, source_excerpt, "
+            "external_artifact. Agent submissions use origin: agent_reported; "
+            "developer_attestation and stronger origins require independent confirmation."
         ),
     )
 
@@ -177,6 +177,9 @@ async def _dispatch(
 
     if name == "record_decisions":
         inp = RecordDecisionsInput(**args)
+        for item in inp.evidence or []:
+            if item.get("kind") == "developer_attestation" or item.get("origin", "agent_reported") != "agent_reported":
+                raise ValueError("MCP evidence cannot claim developer confirmation or independent provenance.")
         return capture.record_decisions(
             change_id=inp.change_id,
             expected_revision=inp.expected_revision,
