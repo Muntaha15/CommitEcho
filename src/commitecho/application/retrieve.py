@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import Any
 
@@ -52,6 +53,11 @@ class RetrieveService:
             raise ValueError("page_size must be between 1 and 100.")
         if cursor is not None and (not isinstance(cursor, str) or not cursor.isdecimal() or int(cursor) > 10_000):
             raise ValueError("cursor must be an offset between 0 and 10000.")
+        if question:
+            terms = re.findall(r"\w+", question)
+            if not terms:
+                raise ValueError("question must contain searchable words.")
+            literal_query = " ".join(f'"{term}"' for term in terms)
 
         # Step 1: Resolve the anchor ref to an immutable OID
         anchor_oid: str | None = None
@@ -124,7 +130,7 @@ class RetrieveService:
         params: list[str] = []
         if question:
             clauses.append("decisions_fts MATCH ?")
-            params.append(question)
+            params.append(literal_query)
         if path:
             clauses.append("EXISTS (SELECT 1 FROM indexed_paths p WHERE p.revision_id = d.revision_id AND p.path = ?)")
             params.append(path)

@@ -123,6 +123,11 @@ def test_index_reuses_record_and_revision_across_commits(index_db):
         retrieve.search_history(question="shared", page_size=101)
     with pytest.raises(ValueError, match="cursor"):
         retrieve.search_history(question="shared", cursor="-1")
+    assert len(retrieve.search_history(question='"shared revision"?')["results"]) == 3
+    assert retrieve.search_history(question='shared" OR "missing')["results"] == []
+    assert retrieve.search_history(question="shar*")["results"] == []
+    with pytest.raises(ValueError, match="searchable words"):
+        retrieve.search_history(question="?!")
 
 class TestRepository:
     def test_upsert_and_get(self, mem_db):

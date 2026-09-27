@@ -81,7 +81,7 @@ class VerifyCommitInput(BaseModel):
 
 
 class SearchHistoryInput(BaseModel):
-    question: str | None = Field(default=None, description="Natural-language question.")
+    question: str | None = Field(default=None, description="Natural-language words matched literally with AND; punctuation is ignored.")
     path: str | None = Field(default=None, description="Repository-relative file path.")
     line: int | None = Field(default=None, description="Positive line number; requires path and matches explicit line ranges.")
     at_ref: str | None = Field(default=None, description="Git ref to scope results to (default: HEAD).")
