@@ -341,8 +341,40 @@ class RetrieveService:
             }
             decisions = [d for d in decisions if d["revision_id"] in path_revision_ids]
 
-        # Detect branch conflicts: same decision_id with multiple revision_ids
-        conflicts = _detect_conflicts(decisions)
+        conflicts: list[dict[str, Any]] = []
+        if decisions:
+            try:
+                if is_ancestor is None:
+                    raise ValueError("Git ancestry could not be verified")
+                reachable, reachability = self._git.reachable_commit_oids(to_oid)
+                candidate_oids = set(reachable)
+                if is_ancestor is False:
+                    other, other_coverage = self._git.reachable_commit_oids(from_oid)
+                    candidate_oids.update(other)
+                    if other_coverage == "partial":
+                        reachability = "partial"
+                if reachability == "partial":
+                    raise ValueError("Git ancestry is incomplete")
+                decision_ids = sorted({d["decision_id"] for d in decisions})
+                placeholders = ",".join("?" * len(decision_ids))
+                candidate_rows = self._index.execute(
+                    f"""SELECT r.record_id, cr.commit_oid, r.summary, r.raw_json,
+                               d.revision_id, d.decision_id, d.disposition,
+                               d.problem, d.choice, d.rationale
+                        FROM indexed_records r
+                        JOIN indexed_commit_records cr ON cr.record_id = r.record_id
+                        JOIN indexed_record_decisions rd ON rd.record_id = r.record_id
+                        JOIN indexed_decisions d ON d.revision_id = rd.revision_id
+                        WHERE d.decision_id IN ({placeholders})""",
+                    decision_ids,
+                )
+                candidates = [_decision_row_to_dict(row) for row in candidate_rows
+                              if row["commit_oid"] in candidate_oids]
+                if path:
+                    candidates = [d for d in candidates if d["revision_id"] in path_revision_ids]
+                conflicts = _detect_conflicts(candidates, self._git)
+            except Exception as exc:
+                coverage_notes.append(f"Conflict assessment incomplete: {exc}")
 
         # Indexing completeness for this range
         indexed_oids = {
@@ -445,6 +477,7 @@ def _decision_row_to_dict(row: Any) -> dict[str, Any]:
         "rationale": row["rationale"],
         "evidence_ids": sorted(evidence_ids),
         "code_scope": decision.get("code_scope", {}),
+        "predecessor_revision_ids": decision.get("predecessor_revision_ids", []),
     }
 
 
@@ -483,28 +516,57 @@ def _check_ancestry(
     return is_ancestor, merge_base
 
 
-def _detect_conflicts(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return a list of conflict descriptors for decisions with the same decision_id
-    but different revision_ids within the result set.
-
-    This surfaces branch-local incompatible revisions.
-    """
+def _detect_conflicts(decisions: list[dict[str, Any]], git: GitAdapter) -> list[dict[str, Any]]:
+    """Report revisions with neither lineage nor commit ancestry in common."""
     from collections import defaultdict
 
-    by_decision: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_decision: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     for d in decisions:
-        by_decision[d["decision_id"]].append(d)
+        revision = by_decision[d["decision_id"]].setdefault(
+            d["revision_id"], {"predecessors": set(), "commits": set()}
+        )
+        revision["predecessors"].update(d["predecessor_revision_ids"])
+        revision["commits"].add(d["commit_oid"])
+
+    ancestors: dict[str, set[str]] = {}
+
+    def reachable(oid: str) -> set[str]:
+        if oid not in ancestors:
+            oids, coverage = git.reachable_commit_oids(oid)
+            if coverage != "full":
+                raise ValueError("Git ancestry is incomplete")
+            ancestors[oid] = set(oids)
+        return ancestors[oid]
+
+    def supersedes(revisions: dict[str, dict[str, Any]], newer: str, older: str) -> bool:
+        pending = list(revisions[newer]["predecessors"])
+        seen: set[str] = set()
+        while pending:
+            predecessor = pending.pop()
+            if predecessor == older:
+                return True
+            if predecessor not in seen:
+                seen.add(predecessor)
+                pending.extend(revisions.get(predecessor, {}).get("predecessors", ()))
+        return False
 
     conflicts = []
-    for decision_id, revs in by_decision.items():
-        if len(revs) > 1:
-            rev_ids = [r["revision_id"] for r in revs]
+    for decision_id, revisions in by_decision.items():
+        conflicting_ids: set[str] = set()
+        ids = sorted(revisions)
+        # ponytail: pairwise revisions; index lineage if one decision gains many revisions.
+        for i, left in enumerate(ids):
+            for right in ids[i + 1:]:
+                if supersedes(revisions, left, right) or supersedes(revisions, right, left):
+                    continue
+                if any(a == b or a in reachable(b) or b in reachable(a)
+                       for a in revisions[left]["commits"] for b in revisions[right]["commits"]):
+                    continue
+                conflicting_ids.update((left, right))
+        if conflicting_ids:
             conflicts.append({
                 "decision_id": decision_id,
-                "conflicting_revision_ids": rev_ids,
-                "note": (
-                    "Multiple revisions of the same decision appear in this range. "
-                    "They may reflect independent branch-local changes that have not been resolved."
-                ),
+                "conflicting_revision_ids": sorted(conflicting_ids),
+                "note": "Unresolved revisions of this decision appear on divergent commits.",
             })
     return conflicts

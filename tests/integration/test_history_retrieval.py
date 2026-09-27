@@ -353,40 +353,54 @@ class TestRangeQueries:
         assert result["merge_base"] is not None
         assert len(result["coverage_notes"]) > 0
 
-    def test_compare_history_detects_branch_conflicts(self, tmp_path):
-        """Two decisions with the same decision_id but different revision_ids in the
-        same range are reported as conflicts."""
-        from commitecho.application.retrieve import RetrieveService, _detect_conflicts
+    def test_linear_supersession_is_not_a_conflict(self, tmp_path):
+        from commitecho.application.retrieve import RetrieveService
+        from tests.fixtures.build_fixtures import build_later_reversal
 
-        # _detect_conflicts is a pure function — test directly with synthetic data
-        decisions = [
-            {
-                "revision_id": "rev-1",
-                "decision_id": "dec-A",
-                "record_id": "r1",
-                "commit_oid": "aaa",
-                "summary": "s",
-                "disposition": "selected",
-                "problem": "p",
-                "choice": "c1",
-                "rationale": "r",
-            },
-            {
-                "revision_id": "rev-2",
-                "decision_id": "dec-A",  # same decision_id, different revision
-                "record_id": "r2",
-                "commit_oid": "bbb",
-                "summary": "s",
-                "disposition": "selected",
-                "problem": "p",
-                "choice": "c2",
-                "rationale": "r",
-            },
+        built = build_later_reversal(tmp_path)
+        repo = Path(built["repo"])
+        git, drafts, index = _open_services(repo)
+        _index_commits(repo, git, index, built["commit_oid_a"], built["commit_oid_b"])
+        result = RetrieveService(drafts, index, git).compare_history(
+            from_ref=git.resolve(f"{built['commit_oid_a']}^"), to_ref=built["commit_oid_b"]
+        )
+        assert len(result["decisions"]) == 2
+        by_commit = {d["commit_oid"]: d for d in result["decisions"]}
+        old = by_commit[built["commit_oid_a"]]
+        new = by_commit[built["commit_oid_b"]]
+        assert old["decision_id"] == new["decision_id"]
+        assert old["revision_id"] in new["predecessor_revision_ids"]
+        assert result["conflicts"] == []
+
+    def test_divergent_branches_are_a_conflict(self, tmp_path):
+        from commitecho.application.retrieve import RetrieveService
+        from tests.fixtures.build_fixtures import build_branch_conflict
+
+        built = build_branch_conflict(tmp_path)
+        repo = Path(built["repo"])
+        git, drafts, index = _open_services(repo)
+        _index_commits(repo, git, index, built["main_commit_oid"], built["branch_commit_oid"])
+        result = RetrieveService(drafts, index, git).compare_history(
+            from_ref=built["main_commit_oid"], to_ref=built["branch_commit_oid"]
+        )
+        assert len(result["decisions"]) == 1  # to_ref branch only
+        assert len(result["conflicts"]) == 1
+        assert result["conflicts"][0]["decision_id"] == built["shared_decision_id"]
+        assert len(result["conflicts"][0]["conflicting_revision_ids"]) == 2
+
+    def test_explicit_predecessor_resolves_incomparable_commits(self):
+        from unittest.mock import Mock
+        from commitecho.application.retrieve import _detect_conflicts
+
+        git = Mock()
+        git.reachable_commit_oids.side_effect = lambda oid: ([oid], "full")
+        revisions = [
+            {"decision_id": "decision", "revision_id": "old", "commit_oid": "a",
+             "predecessor_revision_ids": []},
+            {"decision_id": "decision", "revision_id": "new", "commit_oid": "b",
+             "predecessor_revision_ids": ["old"]},
         ]
-        conflicts = _detect_conflicts(decisions)
-        assert len(conflicts) == 1
-        assert conflicts[0]["decision_id"] == "dec-A"
-        assert set(conflicts[0]["conflicting_revision_ids"]) == {"rev-1", "rev-2"}
+        assert _detect_conflicts(revisions, git) == []
 
 
 # ---------------------------------------------------------------------------
