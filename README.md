@@ -6,14 +6,6 @@ CommitEcho is a local MCP server. During development, your coding agent records 
 
 **Status: v0.1.0 implementation in progress.** The local MCP server, CLI, storage, Git adapter, fixtures, and automated tests exist. Real client workflow validation and release gates are still pending.
 
-## Architecture documents
-
-- [Architecture](docs/architecture.md): components, data model, commit linkage, retrieval, and failure behavior.
-- [Agent integrations](docs/integrations.md): Codex, Antigravity IDE, and GitHub Copilot in VS Code; documented capabilities and validation gates.
-- [Product scope and delivery](docs/product-and-delivery.md): differentiation, milestones, effort assumptions, and evaluation.
-- [Technical notes](docs/technical-notes.md): implementation walkthrough, data flow, limitations, and maintenance guide.
-
----
 
 ## Install
 
