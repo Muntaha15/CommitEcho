@@ -148,6 +148,26 @@ def test_evidence_links_survive_prepare_and_clone(tmp_path):
     assert retrieve.get_evidence(evidence_id=evidence_id)["content"] == "retry produced one result"
 
 
+def test_superseding_revision_link_survives_clone(tmp_path):
+    from commitecho.application.retrieve import RetrieveService
+    from tests.fixtures.build_fixtures import build_later_reversal
+
+    built = build_later_reversal(tmp_path)
+    source = Path(built["repo"])
+    original = json.loads(subprocess.run(
+        ["git", "show", f"{built['commit_oid_a']}:.commitecho/records/{built['record_id_a']}.json"],
+        cwd=source, check=True, capture_output=True, text=True,
+    ).stdout)
+    predecessor_id = original["decisions"][0]["revision_id"]
+
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(source), str(clone)], check=True, capture_output=True)
+    git, drafts, index = _open_services(clone)
+    _index_commits(clone, git, index, built["commit_oid_a"], built["commit_oid_b"])
+    record = RetrieveService(drafts, index, git).get_evidence(record_id=built["record_id_b"])["record"]
+    assert record["decisions"][0]["predecessor_revision_ids"] == [predecessor_id]
+
+
 # ---------------------------------------------------------------------------
 # Temporal scoping
 # ---------------------------------------------------------------------------

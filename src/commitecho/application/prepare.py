@@ -110,7 +110,7 @@ class PrepareService:
             ).fetchone()
             if row is None:
                 raise ValueError(f"Decision revision '{rev_id}' not found.")
-            revisions.append(_row_to_revision(row))
+            revisions.append(_row_to_revision(self._conn, row))
 
         # Fetch evidence referenced by any selected revision
         all_ev_ids: set[str] = set()
@@ -222,7 +222,7 @@ class PrepareService:
             raise
 
 
-def _row_to_revision(row: Any) -> DecisionRevision:
+def _row_to_revision(conn: sqlite3.Connection, row: Any) -> DecisionRevision:
     from commitecho.domain.models import (
         Alternative,
         CodeScope,
@@ -233,12 +233,15 @@ def _row_to_revision(row: Any) -> DecisionRevision:
     alts_raw = _json.loads(row["alternatives"])
     scope_raw = _json.loads(row["code_scope"])
     ev_ids = _json.loads(row["evidence_ids"])
-    preds_rows = []  # filled separately if needed; OK for prepare
+    predecessor_ids = [r["predecessor_id"] for r in conn.execute(
+        "SELECT predecessor_id FROM revision_predecessors WHERE revision_id = ? ORDER BY predecessor_id",
+        (row["revision_id"],),
+    )]
 
     return DecisionRevision(
         decision_id=row["decision_id"],
         revision_id=row["revision_id"],
-        predecessor_revision_ids=preds_rows,
+        predecessor_revision_ids=predecessor_ids,
         disposition=DecisionDisposition(row["disposition"]),
         problem=row["problem"],
         choice=row["choice"],
