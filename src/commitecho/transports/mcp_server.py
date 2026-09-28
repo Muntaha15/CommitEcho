@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -40,11 +40,23 @@ class BeginChangeInput(BaseModel):
     prior_change_id: str | None = Field(default=None, description="Resume an existing open change.")
 
 
+class DecisionInput(BaseModel):
+    problem: str
+    choice: str
+    rationale: str
+    decision_id: str | None = None
+    predecessor_revision_ids: list[str] = Field(default_factory=list)
+    disposition: Literal["proposed", "selected", "rejected", "withdrawn"] = "proposed"
+    alternatives: list[dict[str, Any]] = Field(default_factory=list)
+    code_scope: dict[str, Any] = Field(default_factory=dict)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class RecordDecisionsInput(BaseModel):
     change_id: str = Field(description="The change ID returned by begin_change.")
     expected_revision: int = Field(description="Current revision_counter; prevents blind overwrites.")
     operation_id: str = Field(description="Caller-generated idempotency key.")
-    decisions: list[dict[str, Any]] = Field(
+    decisions: list[DecisionInput] = Field(
         description=(
             "List of decision objects. Each must have: problem, choice, rationale. "
             "Optional: decision_id, predecessor_revision_ids, disposition, alternatives, "
@@ -185,7 +197,7 @@ async def _dispatch(
             change_id=inp.change_id,
             expected_revision=inp.expected_revision,
             operation_id=inp.operation_id,
-            decisions=inp.decisions,
+            decisions=[decision.model_dump(exclude_unset=True) for decision in inp.decisions],
             evidence=inp.evidence,
         )
 
@@ -255,18 +267,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Call this at the start of any meaningful code/design task. "
             "Returns change_id, session_id, base Git OID, and revision counter."
         ),
-        inputSchema={
-            "type": "object",
-            "required": ["title", "client", "operation_id"],
-            "properties": {
-                "title": {"type": "string", "description": "Short description of the work."},
-                "client": {"type": "string", "description": "Client identifier."},
-                "operation_id": {"type": "string", "description": "Idempotency key (UUID)."},
-                "client_version": {"type": "string"},
-                "native_session_id": {"type": "string"},
-                "prior_change_id": {"type": "string"},
-            },
-        },
+        inputSchema=BeginChangeInput.model_json_schema(),
     ),
     Tool(
         name="record_decisions",
@@ -276,34 +277,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Record only information present in visible context. "
             "Returns persisted revision_ids and updated revision_counter."
         ),
-        inputSchema={
-            "type": "object",
-            "required": ["change_id", "expected_revision", "operation_id", "decisions"],
-            "properties": {
-                "change_id": {"type": "string"},
-                "expected_revision": {"type": "integer"},
-                "operation_id": {"type": "string"},
-                "decisions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": ["problem", "choice", "rationale"],
-                        "properties": {
-                            "problem": {"type": "string"},
-                            "choice": {"type": "string"},
-                            "rationale": {"type": "string"},
-                            "disposition": {"type": "string", "enum": ["proposed", "selected", "rejected", "withdrawn"]},
-                            "decision_id": {"type": "string"},
-                            "predecessor_revision_ids": {"type": "array", "items": {"type": "string"}},
-                            "alternatives": {"type": "array"},
-                            "code_scope": {"type": "object"},
-                            "evidence_ids": {"type": "array", "items": {"type": "string"}},
-                        },
-                    },
-                },
-                "evidence": {"type": "array"},
-            },
-        },
+        inputSchema=RecordDecisionsInput.model_json_schema(),
     ),
     Tool(
         name="prepare_commit",
@@ -313,17 +287,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Does NOT stage or commit files. "
             "Call after staging code changes but before committing."
         ),
-        inputSchema={
-            "type": "object",
-            "required": ["change_id", "expected_revision", "selected_revision_ids", "summary", "operation_id"],
-            "properties": {
-                "change_id": {"type": "string"},
-                "expected_revision": {"type": "integer"},
-                "selected_revision_ids": {"type": "array", "items": {"type": "string"}},
-                "summary": {"type": "string"},
-                "operation_id": {"type": "string"},
-            },
-        },
+        inputSchema=PrepareCommitInput.model_json_schema(),
     ),
     Tool(
         name="verify_commit",
@@ -332,15 +296,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Checks three independent facts: trailer presence, record integrity, and code-change match. "
             "Returns binding outcome: exact | declared_changed | contained_only | unverifiable | invalid."
         ),
-        inputSchema={
-            "type": "object",
-            "required": ["commit_oid"],
-            "properties": {
-                "commit_oid": {"type": "string"},
-                "record_id": {"type": "string"},
-                "keep_open": {"type": "boolean", "default": False},
-            },
-        },
+        inputSchema=VerifyCommitInput.model_json_schema(),
     ),
     Tool(
         name="search_history",
@@ -349,19 +305,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Scoped to the ancestry of at_ref (default: HEAD). "
             "Returns ranked decision records with evidence IDs and coverage information."
         ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "question": {"type": "string"},
-                "path": {"type": "string"},
-                "line": {"type": "integer"},
-                "at_ref": {"type": "string"},
-                "from_ref": {"type": "string"},
-                "to_ref": {"type": "string"},
-                "page_size": {"type": "integer", "default": 20},
-                "cursor": {"type": "string"},
-            },
-        },
+        inputSchema=SearchHistoryInput.model_json_schema(),
     ),
     Tool(
         name="get_evidence",
@@ -369,13 +313,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Retrieve bounded source material and provenance for an evidence_id or record_id. "
             "Use after search_history to expand a specific evidence item."
         ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "evidence_id": {"type": "string"},
-                "record_id": {"type": "string"},
-            },
-        },
+        inputSchema=GetEvidenceInput.model_json_schema(),
     ),
     Tool(
         name="compare_history",
@@ -384,15 +322,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Excludes commits reachable from from_ref. "
             "Reports branch divergence and merge-base when applicable."
         ),
-        inputSchema={
-            "type": "object",
-            "required": ["from_ref", "to_ref"],
-            "properties": {
-                "from_ref": {"type": "string"},
-                "to_ref": {"type": "string"},
-                "path": {"type": "string"},
-            },
-        },
+        inputSchema=CompareHistoryInput.model_json_schema(),
     ),
     Tool(
         name="get_status",
@@ -400,12 +330,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Return pending changes, stale preparations, indexing coverage, and setup capability. "
             "Use to check server health and see what work is in progress."
         ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "change_id": {"type": "string"},
-            },
-        },
+        inputSchema=GetStatusInput.model_json_schema(),
     ),
 ]
 

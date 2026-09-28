@@ -19,6 +19,7 @@ def test_mcp_caller_cannot_self_assert_provenance(monkeypatch):
         sys.modules["mcp.server.stdio"].stdio_server = object()
         sys.modules["mcp.types"].Tool = lambda **kwargs: kwargs
         sys.modules["mcp.types"].TextContent = object
+        sys.modules["mcp.types"].CallToolResult = object
 
     dispatch = importlib.import_module("commitecho.transports.mcp_server")._dispatch
 
