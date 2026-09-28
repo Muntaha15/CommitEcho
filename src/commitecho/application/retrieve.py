@@ -437,15 +437,46 @@ class RetrieveService:
         ).fetchone()["c"]
 
         head_oid = self._git.head_oid()
-
-        # Check if HEAD is indexed
-        head_indexed = False
+        coverage_notes: list[str] = []
+        reachable_oids: set[str] = set()
         if head_oid:
-            head_indexed = bool(
-                self._index.execute(
-                    "SELECT 1 FROM indexed_commits WHERE commit_oid = ?", (head_oid,)
-                ).fetchone()
+            try:
+                oids, git_coverage = self._git.reachable_commit_oids(head_oid)
+                reachable_oids = set(oids)
+                if git_coverage != "full":
+                    coverage_notes.append("Git history is shallow or incomplete.")
+            except Exception as exc:
+                coverage_notes.append(f"Cannot enumerate reachable commits: {exc}")
+        else:
+            coverage_notes.append(
+                "HEAD is unborn or unavailable; history coverage cannot be verified."
             )
+
+        indexed_oids = {
+            row["commit_oid"]
+            for row in self._index.execute("SELECT commit_oid FROM indexed_commits")
+        }
+        missing_oids = reachable_oids - indexed_oids
+        if missing_oids:
+            coverage_notes.append(
+                f"{len(missing_oids)} reachable commit(s) not yet indexed. "
+                "Run `commitecho index` to improve coverage."
+            )
+        head_indexed = bool(head_oid and head_oid in indexed_oids)
+
+        diagnostics: list[dict[str, Any]] = []
+        if reachable_oids:
+            placeholders = ",".join("?" * len(reachable_oids))
+            diagnostics = [dict(row) for row in self._index.execute(
+                f"""SELECT commit_oid, record_path, error, observed_at
+                    FROM index_diagnostics WHERE commit_oid IN ({placeholders})
+                    ORDER BY observed_at, commit_oid, record_path""",
+                tuple(sorted(reachable_oids)),
+            )]
+            if diagnostics:
+                coverage_notes.append(
+                    f"{len(diagnostics)} indexing diagnostic(s) affect reachable history."
+                )
 
         return {
             "worktree": repo_info.worktree_id,
@@ -454,7 +485,9 @@ class RetrieveService:
             "open_changes": open_changes,
             "abandoned_changes": abandoned_changes,
             "indexed_commit_count": indexed_count,
-            "coverage": "partial" if (head_oid and not head_indexed) else "full",
+            "coverage": "partial" if coverage_notes else "full",
+            "coverage_notes": coverage_notes,
+            "index_diagnostics": diagnostics,
         }
 
 

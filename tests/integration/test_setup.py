@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import tomlkit
 
 from commitecho.integrations.profiles import (
     ALL_PROFILES,
@@ -36,6 +37,11 @@ from commitecho.integrations.profiles import (
 def _make_generator(tmp_path: Path, server_cmd: list[str] | None = None) -> SetupGenerator:
     cmd = server_cmd or [sys.executable, "-m", "commitecho", "serve"]
     return SetupGenerator(tmp_path, cmd)
+
+
+def _read_config(path: Path, profile):
+    raw = path.read_text(encoding="utf-8")
+    return tomlkit.parse(raw) if profile.config_format == "toml" else json.loads(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +65,7 @@ def test_fresh_install_writes_all_files(tmp_path: Path, client_id: str) -> None:
     # MCP config file must exist and contain a valid commitecho entry
     config_file = tmp_path / profile.mcp_config_path
     assert config_file.exists(), f"MCP config not created: {profile.mcp_config_path}"
-    config = json.loads(config_file.read_text(encoding="utf-8"))
+    config = _read_config(config_file, profile)
     servers = config[profile.mcp_servers_key]
     assert "commitecho" in servers, "commitecho key missing from servers map"
     entry = servers["commitecho"]
@@ -78,7 +84,12 @@ def test_fresh_install_writes_all_files(tmp_path: Path, client_id: str) -> None:
     if profile.instruction_path:
         instr_file = tmp_path / profile.instruction_path
         assert instr_file.exists(), f"Instruction file not created: {profile.instruction_path}"
-        assert "<!-- commitecho-activation -->" in instr_file.read_text(encoding="utf-8")
+        content = instr_file.read_text(encoding="utf-8")
+        assert "<!-- commitecho-activation -->" in content
+        if getattr(profile, "instruction_format", "plain") == "rule":
+            assert content.startswith("---")
+            assert "trigger: always_on" in content
+            assert "description:" in content
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +127,8 @@ def test_dry_run_writes_nothing(tmp_path: Path, client_id: str) -> None:
     # No file should have been created
     assert not (tmp_path / profile.mcp_config_path).exists()
     assert not (tmp_path / profile.skill_path).exists()
+    if profile.instruction_path:
+        assert not (tmp_path / profile.instruction_path).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +142,7 @@ def test_mcp_entry_args_include_repo_path(tmp_path: Path) -> None:
     gen = _make_generator(tmp_path)
     gen.generate(profile, dry_run=False)
 
-    config = json.loads((tmp_path / profile.mcp_config_path).read_text(encoding="utf-8"))
+    config = _read_config(tmp_path / profile.mcp_config_path, profile)
     args: list[str] = config[profile.mcp_servers_key]["commitecho"]["args"]
     assert args[-2] == "--repo"
     assert Path(args[-1]).is_absolute()
@@ -140,14 +153,20 @@ def test_mcp_entry_preserves_existing_servers(tmp_path: Path) -> None:
     profile = ALL_PROFILES["codex"]
     config_file = tmp_path / profile.mcp_config_path
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    existing = {profile.mcp_servers_key: {"other-tool": {"command": "other", "args": []}}}
-    config_file.write_text(json.dumps(existing), encoding="utf-8")
+    config_file.write_text(
+        '# keep this comment\nmodel = "gpt-test"\n\n'
+        '[mcp_servers."other-tool"]\ncommand = "other"\nargs = []\n',
+        encoding="utf-8",
+    )
 
     gen = _make_generator(tmp_path)
     gen.generate(profile, dry_run=False)
 
-    merged = json.loads(config_file.read_text(encoding="utf-8"))
+    merged_text = config_file.read_text(encoding="utf-8")
+    merged = _read_config(config_file, profile)
     servers = merged[profile.mcp_servers_key]
+    assert "# keep this comment" in merged_text
+    assert merged["model"] == "gpt-test"
     assert "other-tool" in servers, "Existing server entry was lost after merge"
     assert "commitecho" in servers, "commitecho entry missing after merge"
 
@@ -165,26 +184,26 @@ def test_server_command_with_spaces_stored_as_single_element(tmp_path: Path) -> 
     gen = SetupGenerator(tmp_path, cmd)
     gen.generate(profile, dry_run=False)
 
-    config = json.loads((tmp_path / profile.mcp_config_path).read_text(encoding="utf-8"))
+    config = _read_config(tmp_path / profile.mcp_config_path, profile)
     stored_cmd = config[profile.mcp_servers_key]["commitecho"]["command"]
     assert stored_cmd == spaced_exe, (
         f"Executable with spaces was mangled: expected {spaced_exe!r}, got {stored_cmd!r}"
     )
 
 
-def test_setup_command_launches_mcp_server(tmp_path: Path) -> None:
-    """The generated command must complete a real stdio MCP handshake."""
+@pytest.mark.parametrize("client_id", ["codex", "antigravity"])
+def test_setup_command_launches_mcp_server(tmp_path: Path, client_id: str) -> None:
+    """The generated command must complete a real stdio MCP handshake without PYTHONPATH."""
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     env = os.environ.copy()
-    source = str(Path(__file__).resolve().parents[2] / "src")
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, [source, env.get("PYTHONPATH")]))
+    env.pop("PYTHONPATH", None)
 
     subprocess.run(
-        [sys.executable, "-m", "commitecho", "setup", "--client", "codex", "--repo", str(tmp_path)],
-        check=True, capture_output=True, text=True, env=env,
+        [sys.executable, "-m", "commitecho", "setup", "--client", client_id, "--repo", str(tmp_path)],
+        check=True, capture_output=True, text=True, env=env, cwd=str(tmp_path),
     )
-    profile = ALL_PROFILES["codex"]
-    config = json.loads((tmp_path / profile.mcp_config_path).read_text(encoding="utf-8"))
+    profile = ALL_PROFILES[client_id]
+    config = _read_config(tmp_path / profile.mcp_config_path, profile)
     entry = config[profile.mcp_servers_key]["commitecho"]
     assert entry["args"] == ["-m", "commitecho", "serve", "--repo", str(tmp_path)]
 
@@ -192,19 +211,184 @@ def test_setup_command_launches_mcp_server(tmp_path: Path) -> None:
     from mcp.client.stdio import stdio_client
 
     async def handshake():
-        async with stdio_client(StdioServerParameters(
+        params = StdioServerParameters(
             command=entry["command"], args=entry["args"], env=env,
-        )) as (read, write):
+        )
+        async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
-                initialized = await session.initialize()
-                listed = await session.list_tools()
-                return initialized, listed
+                initialized = await asyncio.wait_for(session.initialize(), timeout=10)
+                listed = await asyncio.wait_for(session.list_tools(), timeout=10)
+                status = await asyncio.wait_for(session.call_tool("get_status", {}), timeout=10)
+                return initialized, listed, status
 
-    initialized, listed = asyncio.run(handshake())
+    initialized, listed, status = asyncio.run(handshake())
     assert initialized.serverInfo.name == "commitecho"
     assert {tool.name for tool in listed.tools} >= {
         "begin_change", "prepare_commit", "verify_commit", "search_history",
     }
+    assert not status.isError
+
+
+def test_malformed_codex_config_is_unchanged(tmp_path: Path) -> None:
+    profile = ALL_PROFILES["codex"]
+    config_file = tmp_path / profile.mcp_config_path
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("[broken", encoding="utf-8")
+
+    with pytest.raises(Exception):
+        _make_generator(tmp_path).generate(profile)
+
+    assert config_file.read_text(encoding="utf-8") == "[broken"
+
+
+def test_malformed_antigravity_config_is_unchanged(tmp_path: Path) -> None:
+    profile = ALL_PROFILES["antigravity"]
+    config_file = tmp_path / profile.mcp_config_path
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        _make_generator(tmp_path).generate(profile)
+
+    assert config_file.read_text(encoding="utf-8") == "{broken"
+
+
+def test_antigravity_exact_documented_paths_and_rule_generation(tmp_path: Path) -> None:
+    """Exact documented Antigravity skill path asserted independently of profile."""
+    # Documented targets
+    expected_mcp_path = ".agents/mcp_config.json"
+    expected_skill_path = ".agents/skills/commitecho/SKILL.md"
+    expected_rule_path = ".agents/rules/commitecho.md"
+
+    profile = ALL_PROFILES["antigravity"]
+    assert profile.mcp_config_path == expected_mcp_path
+    assert profile.skill_path == expected_skill_path
+    assert profile.instruction_path == expected_rule_path
+
+    gen = _make_generator(tmp_path)
+    changes = gen.generate(profile, dry_run=False)
+
+    rule_file = tmp_path / expected_rule_path
+    assert rule_file.exists()
+    content = rule_file.read_text(encoding="utf-8")
+
+    # Valid trigger frontmatter
+    assert content.startswith("---\n")
+    assert "trigger: always_on" in content
+    assert "description: Capture meaningful coding decisions and recall their evidence." in content
+    # Activation instructions
+    assert "<!-- commitecho-activation -->" in content
+    assert "Read the installed CommitEcho skill" in content
+    assert "Begin or resume a change" in content
+    assert "Search history and fetch evidence" in content
+    assert "Prepare and verify records" in content
+    assert "Report unavailable tools" in content
+    assert "does not imply permission to make Git commits" in content
+
+    # Skill in folder-based path
+    skill_file = tmp_path / expected_skill_path
+    assert skill_file.exists()
+    assert skill_file.read_text(encoding="utf-8") == _SKILL_TEMPLATE
+
+
+def test_antigravity_repairs_legacy_marker_only_rule(tmp_path: Path) -> None:
+    """A legacy rule containing only the activation marker/block must be upgraded."""
+    profile = ALL_PROFILES["antigravity"]
+    rule_file = tmp_path / profile.instruction_path
+    rule_file.parent.mkdir(parents=True, exist_ok=True)
+    rule_file.write_text(
+        "<!-- commitecho-activation -->\n"
+        "## CommitEcho – decision capture and recall\n\n"
+        "Use the CommitEcho MCP tools to preserve and recall the reasoning behind code changes.\n\n"
+        "Activate the commitecho skill for detailed capture/recall steps.\n",
+        encoding="utf-8",
+    )
+
+    gen = _make_generator(tmp_path)
+    changes = gen.generate(profile, dry_run=False)
+
+    assert any("[update]" in c and profile.instruction_path in c for c in changes)
+    updated = rule_file.read_text(encoding="utf-8")
+    assert updated.startswith("---\n")
+    assert "trigger: always_on" in updated
+    assert "<!-- commitecho-activation -->" in updated
+
+    # Idempotent second run
+    second_changes = gen.generate(profile, dry_run=False)
+    assert all("[skip]" in c for c in second_changes)
+
+
+def test_antigravity_preserves_unrelated_rule_and_json_mcp_servers(tmp_path: Path) -> None:
+    """Setup must preserve unrelated rules and existing other MCP servers in mcp_config.json."""
+    profile = ALL_PROFILES["antigravity"]
+    config_file = tmp_path / profile.mcp_config_path
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    existing_config = {
+        "mcpServers": {
+            "custom-tool": {"command": "custom", "args": ["--port", "8080"]}
+        }
+    }
+    config_file.write_text(json.dumps(existing_config), encoding="utf-8")
+
+    # Custom rule with custom frontmatter
+    rule_file = tmp_path / profile.instruction_path
+    rule_file.parent.mkdir(parents=True, exist_ok=True)
+    custom_rule = (
+        "---\n"
+        "trigger: custom\n"
+        "description: User custom description\n"
+        "---\n"
+        "<!-- commitecho-activation -->\n"
+        "# Custom Instructions\n"
+    )
+    rule_file.write_text(custom_rule, encoding="utf-8")
+
+    gen = _make_generator(tmp_path)
+    changes = gen.generate(profile, dry_run=False)
+
+    # Config preserved other server
+    loaded_config = json.loads(config_file.read_text(encoding="utf-8"))
+    assert "custom-tool" in loaded_config["mcpServers"]
+    assert "commitecho" in loaded_config["mcpServers"]
+
+    # Rule with custom frontmatter was kept intact
+    assert rule_file.read_text(encoding="utf-8") == custom_rule
+
+
+def test_doctor_distinguishes_readiness_warnings_and_failures(tmp_path: Path) -> None:
+    """Doctor command must truthfully report static readiness, warnings, and parse failures."""
+    from click.testing import CliRunner
+    from commitecho.transports.cli import doctor
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    runner = CliRunner()
+
+    # 1. Fresh repo before setup: missing optional client files must NOT be a fatal exit
+    res = runner.invoke(doctor, ["--repo", str(tmp_path)])
+    assert res.exit_code == 0
+    assert "[missing]" in res.output
+    assert "Core checks passed; some client integrations are not installed or have warnings." in res.output
+    assert "All checks passed." not in res.output
+
+    # 2. Setup antigravity
+    gen = _make_generator(tmp_path)
+    gen.generate(ALL_PROFILES["antigravity"], dry_run=False)
+
+    res = runner.invoke(doctor, ["--repo", str(tmp_path)])
+    assert res.exit_code == 0
+    assert "[ok] Antigravity IDE: valid activation rule" in res.output
+    assert "[ok] Antigravity IDE: commitecho entry present" in res.output
+    # Optional Codex/Copilot missing does not cause failure
+    assert "Core checks passed; some client integrations are not installed or have warnings." in res.output
+
+    # 3. Corrupt mcp config JSON: must cause exit code 1 and [fail]
+    config_file = tmp_path / ALL_PROFILES["antigravity"].mcp_config_path
+    config_file.write_text("{broken", encoding="utf-8")
+
+    res = runner.invoke(doctor, ["--repo", str(tmp_path)])
+    assert res.exit_code == 1
+    assert "[fail] Antigravity IDE: could not parse" in res.output
+    assert "Some checks failed" in res.output
 
 
 # ---------------------------------------------------------------------------

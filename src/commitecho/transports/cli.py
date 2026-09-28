@@ -96,6 +96,8 @@ def doctor(repo: str | None) -> None:
     from commitecho.integrations.profiles import ALL_PROFILES, SKILL_VERSION, _SKILL_TEMPLATE
 
     ok = True
+    has_missing = False
+    has_warnings = False
 
     # Git availability
     try:
@@ -112,6 +114,7 @@ def doctor(repo: str | None) -> None:
         click.echo(f"[ok] Python {pv.major}.{pv.minor}.{pv.micro}")
     else:
         click.echo(f"[warn] Python {pv.major}.{pv.minor}.{pv.micro} – 3.12+ recommended")
+        has_warnings = True
 
     # SQLite FTS5
     try:
@@ -152,6 +155,7 @@ def doctor(repo: str | None) -> None:
             skill_file = worktree / profile.skill_path
             if not skill_file.exists():
                 click.echo(f"[missing] {profile.skill_path}: skill not installed (run 'commitecho setup')")
+                has_missing = True
             elif skill_file.read_text(encoding="utf-8") == _SKILL_TEMPLATE:
                 click.echo(f"[ok] {profile.skill_path}: skill version {SKILL_VERSION} matches")
             else:
@@ -159,17 +163,74 @@ def doctor(repo: str | None) -> None:
                     f"[warn] {profile.skill_path}: skill file differs from current version "
                     f"{SKILL_VERSION} (run 'commitecho setup' to update)"
                 )
+                has_warnings = True
+
+        # Activation instructions & rules check
+        click.echo("\n--- Activation instructions & rules ---")
+        import re
+        instr_paths_seen: set[str] = set()
+        for profile in ALL_PROFILES.values():
+            if not profile.instruction_path or profile.instruction_path in instr_paths_seen:
+                continue
+            instr_paths_seen.add(profile.instruction_path)
+            instr_file = worktree / profile.instruction_path
+            if not instr_file.exists():
+                click.echo(f"[missing] {profile.display_name}: {profile.instruction_path} not found (run 'commitecho setup')")
+                has_missing = True
+                continue
+            try:
+                content = instr_file.read_text(encoding="utf-8")
+                if getattr(profile, "instruction_format", "plain") == "rule":
+                    fm_match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+                    if not fm_match:
+                        click.echo(
+                            f"[warn] {profile.display_name}: {profile.instruction_path} missing trigger frontmatter (run 'commitecho setup')"
+                        )
+                        has_warnings = True
+                    else:
+                        fm_text = fm_match.group(1)
+                        has_trigger = bool(re.search(r"^trigger:\s*\S+", fm_text, re.MULTILINE))
+                        has_desc = bool(re.search(r"^description:\s*\S+", fm_text, re.MULTILINE))
+                        if not (has_trigger and has_desc):
+                            click.echo(
+                                f"[warn] {profile.display_name}: {profile.instruction_path} frontmatter missing trigger or description"
+                            )
+                            has_warnings = True
+                        elif "<!-- commitecho-activation -->" not in content:
+                            click.echo(
+                                f"[warn] {profile.display_name}: {profile.instruction_path} missing CommitEcho activation marker"
+                            )
+                            has_warnings = True
+                        else:
+                            click.echo(f"[ok] {profile.display_name}: valid activation rule in {profile.instruction_path}")
+                else:
+                    if "<!-- commitecho-activation -->" in content:
+                        click.echo(f"[ok] {profile.display_name}: activation block present in {profile.instruction_path}")
+                    else:
+                        click.echo(
+                            f"[warn] {profile.display_name}: {profile.instruction_path} missing CommitEcho activation block"
+                        )
+                        has_warnings = True
+            except Exception as exc:
+                click.echo(f"[fail] {profile.display_name}: could not read {profile.instruction_path}: {exc}", err=True)
+                ok = False
 
         # Client config block detection
         click.echo("\n--- Client configuration ---")
-        import json as _json
+        import tomlkit
         for profile in ALL_PROFILES.values():
             config_file = worktree / profile.mcp_config_path
             if not config_file.exists():
                 click.echo(f"[missing] {profile.display_name}: {profile.mcp_config_path} not found")
+                has_missing = True
                 continue
             try:
-                config = _json.loads(config_file.read_text(encoding="utf-8"))
+                raw = config_file.read_text(encoding="utf-8")
+                config = (
+                    tomlkit.parse(raw)
+                    if profile.config_format == "toml"
+                    else json.loads(raw)
+                )
                 servers = config.get(profile.mcp_servers_key, {})
                 if "commitecho" in servers:
                     click.echo(f"[ok] {profile.display_name}: commitecho entry present in {profile.mcp_config_path}")
@@ -178,14 +239,18 @@ def doctor(repo: str | None) -> None:
                         f"[warn] {profile.display_name}: {profile.mcp_config_path} exists "
                         "but has no 'commitecho' server entry"
                     )
+                    has_warnings = True
             except Exception as exc:
                 click.echo(f"[fail] {profile.display_name}: could not parse {profile.mcp_config_path}: {exc}", err=True)
+                ok = False
 
-    if ok:
-        click.echo("\nAll checks passed.")
-    else:
+    if not ok:
         click.echo("\nSome checks failed. See above for details.", err=True)
         sys.exit(1)
+    elif has_missing or has_warnings:
+        click.echo("\nCore checks passed; some client integrations are not installed or have warnings.")
+    else:
+        click.echo("\nAll checks passed.")
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +277,13 @@ def status(repo: str | None, change_id: str | None, as_json: bool) -> None:
     click.echo(f"Worktree:  {result['worktree']}")
     click.echo(f"HEAD:      {result['head_oid'] or '(unborn)'}")
     click.echo(f"Indexed commits: {result['indexed_commit_count']} ({result['coverage']})")
+    for note in result["coverage_notes"]:
+        click.echo(f"  {note}")
+    for diagnostic in result["index_diagnostics"]:
+        click.echo(
+            f"  {diagnostic['commit_oid'][:8]} {diagnostic['record_path']}: "
+            f"{diagnostic['error']}"
+        )
     if result["open_changes"]:
         click.echo("\nOpen changes:")
         for c in result["open_changes"]:
@@ -606,4 +678,3 @@ def setup(client_ids: tuple[str, ...], repo: str | None, server_cmd: str | None,
         click.echo("\n(dry-run: no files were written)")
     else:
         click.echo("\nSetup complete.")
-

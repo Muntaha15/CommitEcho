@@ -109,6 +109,12 @@ class PrepareService:
             "selected_revision_ids": selected_revision_ids,
             "summary": summary,
         }
+        change = get_change(self._conn, change_id)
+        if change is None:
+            raise ValueError(f"Change '{change_id}' not found.")
+        if change.worktree_id != self._git.repo_info.worktree_id:
+            raise ValueError(f"Change '{change_id}' belongs to another worktree.")
+
         replay = check_operation(self._conn, operation_id, "prepare_commit", payload)
         if replay is not None:
             row = self._conn.execute(
@@ -119,9 +125,10 @@ class PrepareService:
                 raise RuntimeError("Prepared record missing for completed operation.")
             return replay, row["record_json"]
 
-        change = get_change(self._conn, change_id)
-        if change is None:
-            raise ValueError(f"Change '{change_id}' not found.")
+        if change.status not in (ChangeStatus.OPEN, ChangeStatus.PREPARED):
+            raise ValueError(
+                f"Change '{change_id}' is {change.status.value} and cannot be prepared."
+            )
         if change.revision_counter != expected_revision:
             raise ValueError(
                 f"Optimistic conflict: expected revision {expected_revision}, "

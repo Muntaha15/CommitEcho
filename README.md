@@ -100,7 +100,7 @@ commitecho setup --client copilot_vscode
 commitecho setup --client codex --dry-run
 ```
 
-Without `--client`, setup configures all three profiles. It writes the MCP server config and shared skill; Codex and Copilot also receive an activation instruction block. Antigravity currently receives no persistent rule from setup. Dry-run lists planned changes rather than a file diff. Test the generated configuration in your client before relying on automatic capture.
+Without `--client`, setup configures all three profiles. It writes the MCP server config and shared skill; Codex and Copilot receive an activation instruction block, and Antigravity receives a persistent activation rule (`trigger: always_on`). Dry-run lists planned changes rather than a file diff. Test the generated configuration in your client before relying on automatic capture.
 
 ---
 
@@ -115,7 +115,7 @@ python -m commitecho serve --repo .
 Or, when invoked by a client that manages its own process lifecycle:
 
 ```bash
-commitecho setup --client codex   # writes the correct command into .codex/mcp.json
+commitecho setup --client codex   # writes the correct command into .codex/config.toml
 ```
 
 The server exposes eight MCP tools:
@@ -141,9 +141,12 @@ After running `commitecho setup --client codex` the following files are written 
 
 | File | Purpose |
 |---|---|
-| `.codex/mcp.json` | Registers the `commitecho` MCP server entry |
+| `.codex/config.toml` | Registers the `commitecho` MCP server entry for trusted Codex projects |
 | `.codex/skills/commitecho.md` | Shared capture/recall skill |
 | `.codex/AGENTS.md` | Activation instruction block |
+
+Codex loads project-local configuration only after the project is trusted. Setup does not change
+the user's global trust settings.
 
 ### Antigravity IDE
 
@@ -153,8 +156,11 @@ commitecho setup --client antigravity
 
 | File | Purpose |
 |---|---|
-| `.agents/mcp_config.json` | Registers the `commitecho` MCP server entry |
-| `.agents/skills/commitecho.md` | Shared capture/recall skill |
+| `.agents/mcp_config.json` | Registers the `commitecho` MCP server entry under `mcpServers` |
+| `.agents/skills/commitecho/SKILL.md` | Shared capture/recall skill (folder-based) |
+| `.agents/rules/commitecho.md` | Persistent activation rule (`trigger: always_on`) |
+
+After running setup, reload MCP servers using the Antigravity UI (**Additional Options (...) > MCP Servers** or `/mcp` in chat) or start a new session with the repository. Always install CommitEcho into the same Python environment that launches the server.
 
 ### GitHub Copilot in VS Code
 

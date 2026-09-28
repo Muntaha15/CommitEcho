@@ -36,6 +36,7 @@ def _run(args: Sequence[str], cwd: str | None = None) -> str:
     try:
         result = subprocess.run(
             cmd,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             cwd=cwd,
@@ -318,6 +319,7 @@ class GitAdapter:
         result = subprocess.run(
             [_git_exe(), "show", f"{oid}:{path}"],
             cwd=self._info.worktree_dir,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
         )
         if result.returncode:

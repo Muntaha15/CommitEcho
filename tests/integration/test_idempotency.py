@@ -83,6 +83,85 @@ class TestIdempotentRetry:
         with pytest.raises(ValueError, match="another worktree"):
             other_svc.begin_change(title="resume", client="test", operation_id="resume",
                                    prior_change_id=first["change_id"])
+        with pytest.raises(ValueError, match="another worktree"):
+            other_svc.record_decisions(
+                change_id=first["change_id"], expected_revision=0,
+                operation_id="foreign-record", decisions=[
+                    {"problem": "p", "choice": "c", "rationale": "r"}
+                ],
+            )
+        with pytest.raises(ValueError, match="another worktree"):
+            PrepareService(other_svc._conn, other_svc._git).prepare_commit(
+                change_id=second["change_id"], expected_revision=1,
+                selected_revision_ids=[revision_id], summary="foreign",
+                operation_id="foreign-worktree-prepare",
+            )
+
+    def test_terminal_changes_reject_new_writes_but_allow_replay(self, tmp_path):
+        svc = _open_capture(_make_repo(tmp_path))
+        change_id = svc.begin_change(title="done", client="test", operation_id="begin")["change_id"]
+        decisions = [{"problem": "p", "choice": "c", "rationale": "r"}]
+        first = svc.record_decisions(
+            change_id=change_id, expected_revision=0, operation_id="record", decisions=decisions
+        )
+        svc._conn.execute("UPDATE changes SET status = 'committed' WHERE change_id = ?", (change_id,))
+        svc._conn.commit()
+
+        assert svc.record_decisions(
+            change_id=change_id, expected_revision=0, operation_id="record", decisions=decisions
+        ) == first
+        with pytest.raises(ValueError, match="committed"):
+            svc.record_decisions(
+                change_id=change_id, expected_revision=1, operation_id="new-record",
+                decisions=decisions,
+            )
+        with pytest.raises(ValueError, match="committed"):
+            svc.begin_change(
+                title="resume", client="test", operation_id="resume", prior_change_id=change_id
+            )
+        with pytest.raises(ValueError, match="committed"):
+            PrepareService(svc._conn, svc._git).prepare_commit(
+                change_id=change_id, expected_revision=1,
+                selected_revision_ids=first["revision_ids"], summary="too late",
+                operation_id="new-prepare",
+            )
+
+    def test_predecessors_require_same_decision_and_repository(self, tmp_path):
+        svc = _open_capture(_make_repo(tmp_path))
+        first_change = svc.begin_change(title="first", client="test", operation_id="begin-1")
+        decision_id = str(uuid.uuid4())
+        predecessor = svc.record_decisions(
+            change_id=first_change["change_id"], expected_revision=0, operation_id="record-1",
+            decisions=[{"decision_id": decision_id, "problem": "p", "choice": "c", "rationale": "r"}],
+        )["revision_ids"][0]
+        second_change = svc.begin_change(title="second", client="test", operation_id="begin-2")
+
+        valid = svc.record_decisions(
+            change_id=second_change["change_id"], expected_revision=0, operation_id="record-2",
+            decisions=[{"decision_id": decision_id, "predecessor_revision_ids": [predecessor],
+                        "problem": "p", "choice": "revised", "rationale": "r"}],
+        )
+        assert valid["revision_counter"] == 1
+
+        with pytest.raises(ValueError, match="does not exist"):
+            svc.record_decisions(
+                change_id=second_change["change_id"], expected_revision=1,
+                operation_id="missing-pred", decisions=[
+                    {"decision_id": decision_id, "predecessor_revision_ids": ["missing"],
+                     "problem": "p", "choice": "bad", "rationale": "r"}
+                ],
+            )
+        with pytest.raises(ValueError, match="does not belong to decision"):
+            svc.record_decisions(
+                change_id=second_change["change_id"], expected_revision=1, operation_id="bad-pred",
+                evidence=[{"kind": "test_result", "content": "must roll back"}],
+                decisions=[{"decision_id": str(uuid.uuid4()),
+                            "predecessor_revision_ids": [predecessor],
+                            "problem": "p", "choice": "bad", "rationale": "r"}],
+            )
+        assert svc._conn.execute(
+            "SELECT COUNT(*) FROM evidence WHERE content = 'must roll back'"
+        ).fetchone()[0] == 0
 
     def test_failed_capture_can_retry_without_partial_rows(self, tmp_path):
         svc = _open_capture(_make_repo(tmp_path))
@@ -153,6 +232,8 @@ class TestIdempotentRetry:
         prep.prepare_commit(change_id=change_id, expected_revision=1,
                             selected_revision_ids=[revision_id], summary="second",
                             operation_id="prepare-2")
+        svc._conn.execute("UPDATE changes SET status = 'committed' WHERE change_id = ?", (change_id,))
+        svc._conn.commit()
         assert prep.prepare_commit(change_id=change_id, expected_revision=1,
                                    selected_revision_ids=[revision_id], summary="first",
                                    operation_id="prepare-1") == first

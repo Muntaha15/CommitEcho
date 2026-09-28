@@ -88,8 +88,12 @@ class CaptureService:
                 raise ValueError(f"Prior change '{prior_change_id}' not found.")
             if change is not None and change.worktree_id != repo_info.worktree_id:
                 raise ValueError(f"Change '{prior_change_id}' belongs to another worktree.")
-            if change is not None and change.status == ChangeStatus.COMMITTED:
-                raise ValueError(f"Change '{prior_change_id}' is already committed and cannot be reopened.")
+            if change is not None and change.status not in (
+                ChangeStatus.OPEN, ChangeStatus.PREPARED
+            ):
+                raise ValueError(
+                    f"Change '{prior_change_id}' is {change.status.value} and cannot be reopened."
+                )
             if change is None:
                 change = Change(title=title, worktree_id=repo_info.worktree_id,
                                 starting_revision=self._git.head_oid())
@@ -131,12 +135,18 @@ class CaptureService:
         }
         with self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
-            replay = check_operation(self._conn, operation_id, "record_decisions", payload)
-            if replay is not None:
-                return replay
             change = get_change(self._conn, change_id)
             if change is None:
                 raise ValueError(f"Change '{change_id}' not found.")
+            if change.worktree_id != self._git.repo_info.worktree_id:
+                raise ValueError(f"Change '{change_id}' belongs to another worktree.")
+            replay = check_operation(self._conn, operation_id, "record_decisions", payload)
+            if replay is not None:
+                return replay
+            if change.status not in (ChangeStatus.OPEN, ChangeStatus.PREPARED):
+                raise ValueError(
+                    f"Change '{change_id}' is {change.status.value} and cannot be updated."
+                )
             if change.revision_counter != expected_revision:
                 raise ValueError(
                     f"Optimistic conflict: expected revision {expected_revision}, "
@@ -164,7 +174,35 @@ class CaptureService:
             ev_objects.append(ev)
 
         revision_ids: list[str] = []
+        current_repository = self._conn.execute(
+            "SELECT repository_id FROM changes WHERE change_id = ?", (change_id,)
+        ).fetchone()["repository_id"]
         for dec_data in decisions:
+            predecessor_ids = dec_data.get("predecessor_revision_ids", [])
+            predecessors = []
+            for predecessor_id in predecessor_ids:
+                row = self._conn.execute(
+                    """SELECT d.decision_id, c.repository_id
+                       FROM decision_revisions d
+                       JOIN changes c ON c.change_id = d.change_id
+                       WHERE d.revision_id = ?""",
+                    (predecessor_id,),
+                ).fetchone()
+                if row is None or row["repository_id"] != current_repository:
+                    raise ValueError(
+                        f"Predecessor revision '{predecessor_id}' does not exist in this "
+                        "repository."
+                    )
+                predecessors.append(row)
+            decision_id = dec_data.get("decision_id") or (
+                predecessors[0]["decision_id"]
+                if predecessors
+                else str(__import__("uuid").uuid4())
+            )
+            if any(row["decision_id"] != decision_id for row in predecessors):
+                raise ValueError(
+                    f"A predecessor revision does not belong to decision '{decision_id}'."
+                )
             referenced_ids = set(dec_data.get("evidence_ids", []))
             for alternative in dec_data.get("alternatives", []):
                 referenced_ids.update(alternative.get("evidence_ids", []))
@@ -185,8 +223,8 @@ class CaptureService:
             ]
             code_scope_data = dec_data.get("code_scope", {})
             revision = DecisionRevision(
-                decision_id=dec_data.get("decision_id") or str(__import__("uuid").uuid4()),
-                predecessor_revision_ids=dec_data.get("predecessor_revision_ids", []),
+                decision_id=decision_id,
+                predecessor_revision_ids=predecessor_ids,
                 disposition=DecisionDisposition(dec_data.get("disposition", "proposed")),
                 problem=dec_data["problem"],
                 choice=dec_data["choice"],

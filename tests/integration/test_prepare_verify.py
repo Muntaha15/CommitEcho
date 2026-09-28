@@ -60,6 +60,35 @@ def _head(repo: Path) -> str:
     ).stdout.strip()
 
 
+def test_status_checks_all_reachable_commits_and_diagnostics(tmp_path):
+    from datetime import datetime, timezone
+    from commitecho.application.retrieve import RetrieveService
+
+    repo = _make_repo(tmp_path)
+    parent = _head(repo)
+    (repo / "next.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "next.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "next"], cwd=repo, check=True, capture_output=True)
+    head = _head(repo)
+    git, drafts, index = _open_services(repo)
+    now = datetime.now(timezone.utc).isoformat()
+    index.execute(
+        "INSERT INTO indexed_commits VALUES (?, ?, ?, ?, ?, ?)",
+        (head, "repo", parent, now, now, now),
+    )
+    index.execute(
+        "INSERT INTO index_diagnostics VALUES (?, ?, ?, ?)",
+        (parent, ".commitecho/records/bad.json", "invalid record", now),
+    )
+    index.commit()
+
+    result = RetrieveService(drafts, index, git).get_status()
+    assert result["head_indexed"] is True
+    assert result["coverage"] == "partial"
+    assert any("1 reachable commit" in note for note in result["coverage_notes"])
+    assert result["index_diagnostics"][0]["commit_oid"] == parent
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
