@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -187,26 +188,21 @@ def test_setup_command_launches_mcp_server(tmp_path: Path) -> None:
     entry = config[profile.mcp_servers_key]["commitecho"]
     assert entry["args"] == ["-m", "commitecho", "serve", "--repo", str(tmp_path)]
 
-    requests = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-03-26", "capabilities": {},
-            "clientInfo": {"name": "commitecho-test", "version": "1"},
-        }},
-        {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-    ]
-    process = subprocess.Popen(
-        [entry["command"], *entry["args"]], stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
-    )
-    stdout, stderr = process.communicate(
-        "".join(json.dumps(request) + "\n" for request in requests), timeout=15,
-    )
-    responses = {item["id"]: item for line in stdout.splitlines()
-                 if "id" in (item := json.loads(line))}
-    assert process.returncode == 0, stderr
-    assert responses[1]["result"]["serverInfo"]["name"] == "commitecho"
-    assert {tool["name"] for tool in responses[2]["result"]["tools"]} >= {
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    async def handshake():
+        async with stdio_client(StdioServerParameters(
+            command=entry["command"], args=entry["args"], env=env,
+        )) as (read, write):
+            async with ClientSession(read, write) as session:
+                initialized = await session.initialize()
+                listed = await session.list_tools()
+                return initialized, listed
+
+    initialized, listed = asyncio.run(handshake())
+    assert initialized.serverInfo.name == "commitecho"
+    assert {tool.name for tool in listed.tools} >= {
         "begin_change", "prepare_commit", "verify_commit", "search_history",
     }
 
