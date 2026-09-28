@@ -13,9 +13,9 @@ import sys
 from pathlib import Path
 from typing import Any, Literal
 
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, Tool, TextContent
+from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, Tool, TextContent
 from pydantic import BaseModel, Field
 
 from commitecho.git.adapter import GitAdapter, GitError
@@ -137,31 +137,27 @@ def create_server(repo_path: str | Path) -> Server:
     verify = VerifyService(drafts_conn, index_conn, git)
     retrieve = RetrieveService(drafts_conn, index_conn, git)
 
-    server = Server("commitecho")
-
     # ------------------------------------------------------------------
     # Tool: begin_change
     # ------------------------------------------------------------------
 
-    @server.list_tools()
-    async def list_tools() -> list[Tool]:
-        return _TOOL_DEFINITIONS
+    async def list_tools(ctx: ServerRequestContext, params: PaginatedRequestParams | None) -> ListToolsResult:
+        return ListToolsResult(tools=_TOOL_DEFINITIONS)
 
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent] | CallToolResult:
+    async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
         from commitecho.application.prepare import IndexChangedError
         try:
-            result = await _dispatch(name, arguments, capture, prepare, verify, retrieve)
-            return [TextContent(type="text", text=json.dumps(result, default=str))]
+            result = await _dispatch(params.name, params.arguments or {}, capture, prepare, verify, retrieve)
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps(result, default=str))])
         except IndexChangedError as exc:
-            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc), "error_code": "INDEX_CHANGED"}))], isError=True)
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc), "error_code": "INDEX_CHANGED"}))], is_error=True)
         except (ValueError, TypeError) as exc:
-            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], isError=True)
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], is_error=True)
         except Exception as exc:
-            print(f"[commitecho] Unexpected error in {name}: {exc}", file=sys.stderr)
-            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], isError=True)
+            print(f"[commitecho] Unexpected error in {params.name}: {exc}", file=sys.stderr)
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], is_error=True)
 
-    return server
+    return Server("commitecho", on_list_tools=list_tools, on_call_tool=call_tool)
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +174,7 @@ async def _dispatch(
     retrieve: RetrieveService,
 ) -> Any:
     if name == "begin_change":
-        inp = BeginChangeInput(**args)
+        inp = BeginChangeInput.model_validate(args, strict=True)
         return capture.begin_change(
             title=inp.title,
             client=inp.client,
@@ -189,7 +185,7 @@ async def _dispatch(
         )
 
     if name == "record_decisions":
-        inp = RecordDecisionsInput(**args)
+        inp = RecordDecisionsInput.model_validate(args, strict=True)
         for item in inp.evidence or []:
             if item.get("kind") == "developer_attestation" or item.get("origin", "agent_reported") != "agent_reported":
                 raise ValueError("MCP evidence cannot claim developer confirmation or independent provenance.")
@@ -202,7 +198,7 @@ async def _dispatch(
         )
 
     if name == "prepare_commit":
-        inp = PrepareCommitInput(**args)
+        inp = PrepareCommitInput.model_validate(args, strict=True)
         return prepare.prepare_commit(
             change_id=inp.change_id,
             expected_revision=inp.expected_revision,
@@ -212,7 +208,7 @@ async def _dispatch(
         )
 
     if name == "verify_commit":
-        inp = VerifyCommitInput(**args)
+        inp = VerifyCommitInput.model_validate(args, strict=True)
         return verify.verify_commit(
             commit_oid=inp.commit_oid,
             record_id=inp.record_id,
@@ -220,7 +216,7 @@ async def _dispatch(
         )
 
     if name == "search_history":
-        inp = SearchHistoryInput(**args)
+        inp = SearchHistoryInput.model_validate(args, strict=True)
         return retrieve.search_history(
             question=inp.question,
             path=inp.path,
@@ -233,14 +229,14 @@ async def _dispatch(
         )
 
     if name == "get_evidence":
-        inp = GetEvidenceInput(**args)
+        inp = GetEvidenceInput.model_validate(args, strict=True)
         return retrieve.get_evidence(
             evidence_id=inp.evidence_id,
             record_id=inp.record_id,
         )
 
     if name == "compare_history":
-        inp = CompareHistoryInput(**args)
+        inp = CompareHistoryInput.model_validate(args, strict=True)
         return retrieve.compare_history(
             from_ref=inp.from_ref,
             to_ref=inp.to_ref,
@@ -248,7 +244,7 @@ async def _dispatch(
         )
 
     if name == "get_status":
-        inp = GetStatusInput(**args)
+        inp = GetStatusInput.model_validate(args, strict=True)
         return retrieve.get_status(change_id=inp.change_id)
 
     raise ValueError(f"Unknown tool: {name!r}")
@@ -267,7 +263,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Call this at the start of any meaningful code/design task. "
             "Returns change_id, session_id, base Git OID, and revision counter."
         ),
-        inputSchema=BeginChangeInput.model_json_schema(),
+        input_schema=BeginChangeInput.model_json_schema(),
     ),
     Tool(
         name="record_decisions",
@@ -277,7 +273,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Record only information present in visible context. "
             "Returns persisted revision_ids and updated revision_counter."
         ),
-        inputSchema=RecordDecisionsInput.model_json_schema(),
+        input_schema=RecordDecisionsInput.model_json_schema(),
     ),
     Tool(
         name="prepare_commit",
@@ -287,7 +283,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Does NOT stage or commit files. "
             "Call after staging code changes but before committing."
         ),
-        inputSchema=PrepareCommitInput.model_json_schema(),
+        input_schema=PrepareCommitInput.model_json_schema(),
     ),
     Tool(
         name="verify_commit",
@@ -296,7 +292,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Checks three independent facts: trailer presence, record integrity, and code-change match. "
             "Returns binding outcome: exact | declared_changed | contained_only | unverifiable | invalid."
         ),
-        inputSchema=VerifyCommitInput.model_json_schema(),
+        input_schema=VerifyCommitInput.model_json_schema(),
     ),
     Tool(
         name="search_history",
@@ -305,7 +301,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Scoped to the ancestry of at_ref (default: HEAD). "
             "Returns ranked decision records with evidence IDs and coverage information."
         ),
-        inputSchema=SearchHistoryInput.model_json_schema(),
+        input_schema=SearchHistoryInput.model_json_schema(),
     ),
     Tool(
         name="get_evidence",
@@ -313,7 +309,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Retrieve bounded source material and provenance for an evidence_id or record_id. "
             "Use after search_history to expand a specific evidence item."
         ),
-        inputSchema=GetEvidenceInput.model_json_schema(),
+        input_schema=GetEvidenceInput.model_json_schema(),
     ),
     Tool(
         name="compare_history",
@@ -322,7 +318,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Excludes commits reachable from from_ref. "
             "Reports branch divergence and merge-base when applicable."
         ),
-        inputSchema=CompareHistoryInput.model_json_schema(),
+        input_schema=CompareHistoryInput.model_json_schema(),
     ),
     Tool(
         name="get_status",
@@ -330,7 +326,7 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "Return pending changes, stale preparations, indexing coverage, and setup capability. "
             "Use to check server health and see what work is in progress."
         ),
-        inputSchema=GetStatusInput.model_json_schema(),
+        input_schema=GetStatusInput.model_json_schema(),
     ),
 ]
 

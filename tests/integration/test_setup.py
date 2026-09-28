@@ -222,11 +222,11 @@ def test_setup_command_launches_mcp_server(tmp_path: Path, client_id: str) -> No
                 return initialized, listed, status
 
     initialized, listed, status = asyncio.run(handshake())
-    assert initialized.serverInfo.name == "commitecho"
+    assert initialized.server_info.name == "commitecho"
     assert {tool.name for tool in listed.tools} >= {
         "begin_change", "prepare_commit", "verify_commit", "search_history",
     }
-    assert not status.isError
+    assert not status.is_error
 
 
 def test_malformed_codex_config_is_unchanged(tmp_path: Path) -> None:

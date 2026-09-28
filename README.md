@@ -4,7 +4,7 @@ Preserve the decisions behind code changes and recall them through your coding a
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.1.0 implementation in progress.** The local MCP server, CLI, storage, Git adapter, fixtures, and automated tests exist. Real client workflow validation and release gates are still pending.
+**Status: v0.1.0 implementation in progress.** The local MCP server, CLI, storage, Git adapter, fixtures, and automated tests exist. Codex and Antigravity have been smoke-tested with the earlier MCP SDK; the complete three-client workflow and release gates are still pending.
 
 ## Install
 
@@ -18,7 +18,7 @@ Or, with [uv](https://github.com/astral-sh/uv) (recommended):
 uv pip install .
 ```
 
-Requires Python 3.12+ and Git 2.34+. No external service or model API is needed.
+Requires Python 3.12+, Git 2.34+, and MCP Python SDK 2.2+ (installed with the package). No external service or model API is needed.
 
 ---
 
