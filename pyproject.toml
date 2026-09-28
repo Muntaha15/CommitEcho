@@ -10,10 +10,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
-    "mcp>=1.9.0",
+    "mcp>=2.2.0,<3",
     "pydantic>=2.9.0",
     "click>=8.1.0",
+    "tomlkit>=0.13.0,<1",
 ]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [project.scripts]
 commitecho = "commitecho.transports.cli:main"

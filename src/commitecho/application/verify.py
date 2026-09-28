@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from commitecho.domain.models import BindingOutcome
+from commitecho.domain.models import BindingOutcome, ChangeStatus, CommitRecord
 from commitecho.git.adapter import GitAdapter, build_code_manifest, fingerprint_manifest
+from commitecho.storage.repository import update_change_status
 
 
 class VerifyService:
@@ -24,6 +26,7 @@ class VerifyService:
         *,
         commit_oid: str,
         record_id: str | None = None,
+        keep_open: bool = False,
     ) -> dict[str, Any]:
         """Evaluate the binding between a commit and its CommitEcho record.
 
@@ -54,7 +57,14 @@ class VerifyService:
         declared_ids = trailers.get("CommitEcho-Record", [])
         if not declared_ids:
             # No trailer; check if record file exists in tree anyway
-            if record_id and self._git.file_exists_in_commit(full_oid, f".commitecho/records/{record_id}.json"):
+            try:
+                contained = record_id and self._git.file_exists_in_commit(
+                    full_oid, f".commitecho/records/{record_id}.json"
+                )
+            except Exception as exc:
+                return _binding_result(BindingOutcome.UNVERIFIABLE, record_id=record_id,
+                                       commit_oid=full_oid, reasons=[f"Cannot read commit tree: {exc}"])
+            if contained:
                 return _binding_result(
                     BindingOutcome.CONTAINED_ONLY,
                     record_id=record_id,
@@ -84,8 +94,12 @@ class VerifyService:
 
         record_path = f".commitecho/records/{effective_record_id}.json"
 
-        # Check record file exists in commit tree
-        if not self._git.file_exists_in_commit(full_oid, record_path):
+        try:
+            record_bytes = self._git.read_file_from_commit(full_oid, record_path)
+        except Exception as exc:
+            return _binding_result(BindingOutcome.UNVERIFIABLE, record_id=effective_record_id,
+                                   commit_oid=full_oid, reasons=[f"Cannot read committed record: {exc}"])
+        if record_bytes is None:
             return _binding_result(
                 BindingOutcome.DECLARED_CHANGED,
                 record_id=effective_record_id,
@@ -93,18 +107,22 @@ class VerifyService:
                 reasons=[f"Trailer present but record file not found at '{record_path}' in commit tree."],
             )
 
-        # Fact 2: Integrity – load draft record from DB and compare
+        try:
+            record = CommitRecord.model_validate_json(record_bytes)
+        except Exception as exc:
+            return _binding_result(BindingOutcome.INVALID, record_id=effective_record_id,
+                                   commit_oid=full_oid, reasons=[f"Invalid committed record: {exc}"])
+        if (record.schema_version != 1 or record.record_id != effective_record_id
+                or record.prepared_for.manifest_version != 1
+                or record.prepared_for.object_format != self._git.repo_info.object_format):
+            return _binding_result(BindingOutcome.INVALID, record_id=effective_record_id,
+                                   commit_oid=full_oid,
+                                   reasons=["Committed record identity, version, or object format is invalid."])
+
+        # Fact 2: Integrity – compare the Git blob with the prepared draft when available.
         draft_row = self._conn.execute(
             "SELECT * FROM commit_records WHERE record_id = ?", (effective_record_id,)
         ).fetchone()
-        if draft_row is None:
-            return _binding_result(
-                BindingOutcome.CONTAINED_ONLY,
-                record_id=effective_record_id,
-                commit_oid=full_oid,
-                reasons=["Record file in commit but no draft record found in local DB. "
-                         "Run `commitecho index` to rebuild."],
-            )
 
         # Fact 3: Code match – compare expected vs actual parent and fingerprint
         try:
@@ -112,10 +130,21 @@ class VerifyService:
         except Exception:
             actual_parent = "0" * 40  # root commit
 
-        expected_parent = draft_row["parent_oid"]
-        expected_digest = draft_row["code_manifest_sha256"]
+        expected_parent = record.prepared_for.parent_oid
+        expected_digest = record.prepared_for.code_manifest_sha256
 
         reasons: list[str] = []
+        local_preparation_verified = False
+        if draft_row is not None:
+            if draft_row["record_sha256"] is None:
+                reasons.append("Local preparation predates record digests; content cannot be authenticated.")
+            elif hashlib.sha256(record_bytes).hexdigest() != draft_row["record_sha256"]:
+                reasons.append("Committed record differs from the prepared record.")
+            else:
+                local_preparation_verified = True
+            if (draft_row["parent_oid"] != expected_parent
+                    or draft_row["code_manifest_sha256"] != expected_digest):
+                reasons.append("Committed prepared-for fields differ from the local draft.")
         if actual_parent != expected_parent:
             reasons.append(
                 f"Parent mismatch: expected {expected_parent[:12]}, actual {actual_parent[:12]}."
@@ -136,7 +165,9 @@ class VerifyService:
                     "The commit may include changes not present when the record was prepared."
                 )
         except Exception as exc:
-            reasons.append(f"Could not re-derive code manifest: {exc}")
+            return _binding_result(BindingOutcome.UNVERIFIABLE, record_id=effective_record_id,
+                                   commit_oid=full_oid,
+                                   reasons=[f"Could not re-derive code manifest: {exc}"])
 
         if reasons:
             outcome = BindingOutcome.DECLARED_CHANGED
@@ -153,6 +184,7 @@ class VerifyService:
                 "actual_parent": actual_parent,
                 "expected_manifest_sha256": expected_digest,
                 "actual_manifest_sha256": actual_digest,
+                "local_preparation_verified": local_preparation_verified,
             },
         )
 
@@ -173,6 +205,18 @@ class VerifyService:
             ),
         )
         self._index_conn.commit()
+
+        if outcome == BindingOutcome.EXACT and draft_row is not None:
+            with self._conn:
+                pending = self._conn.execute(
+                    "SELECT 1 FROM changes WHERE change_id = ? AND status = 'prepared' "
+                    "AND ? = (SELECT record_id FROM commit_records WHERE change_id = ? "
+                    "ORDER BY rowid DESC LIMIT 1)",
+                    (record.change_id, record.record_id, record.change_id),
+                ).fetchone()
+                if pending:
+                    update_change_status(self._conn, record.change_id,
+                                         ChangeStatus.OPEN if keep_open else ChangeStatus.COMMITTED)
 
         return result
 

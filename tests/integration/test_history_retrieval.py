@@ -97,13 +97,84 @@ def _index_commits(repo: Path, git: GitAdapter, index, *commit_oids: str) -> Non
                 _index_record(index, oid, record_id, record_path, json.loads(r.stdout), r.stdout)
 
 
+def test_evidence_links_survive_prepare_and_clone(tmp_path):
+    from commitecho.application.capture import CaptureService
+    from commitecho.application.prepare import PrepareService
+    from commitecho.application.retrieve import RetrieveService
+
+    repo = _make_repo(tmp_path)
+    git, drafts, _ = _open_services(repo)
+    capture = CaptureService(drafts, git)
+    change = capture.begin_change(title="evidence", client="test", operation_id="begin")
+    evidence_id = str(uuid.uuid4())
+    decision = {"problem": "retry safety", "choice": "dedupe", "rationale": "same input",
+                "alternatives": [{"choice": "ignore", "evidence_ids": [evidence_id]}]}
+
+    with pytest.raises(ValueError, match="does not belong"):
+        capture.record_decisions(change_id=change["change_id"], expected_revision=0,
+                                 operation_id="missing", decisions=[decision])
+
+    result = capture.record_decisions(
+        change_id=change["change_id"], expected_revision=0, operation_id="capture",
+        decisions=[decision],
+        evidence=[{"evidence_id": evidence_id, "kind": "test_result", "origin": "agent_reported",
+                   "content": "retry produced one result"}],
+    )
+    assert result["evidence_ids"] == [evidence_id]
+
+    other = capture.begin_change(title="other", client="test", operation_id="other")
+    with pytest.raises(ValueError, match="does not belong"):
+        capture.record_decisions(change_id=other["change_id"], expected_revision=0,
+                                 operation_id="foreign", decisions=[decision])
+
+    (repo / "code.py").write_text("pass\n")
+    subprocess.run(["git", "add", "code.py"], cwd=repo, check=True)
+    prepared = PrepareService(drafts, git).prepare_commit(
+        change_id=change["change_id"], expected_revision=1,
+        selected_revision_ids=result["revision_ids"], summary="retry safety", operation_id="prepare")
+    portable = json.loads((repo / prepared["record_path"]).read_text())
+    assert [e["evidence_id"] for e in portable["evidence"]] == [evidence_id]
+    subprocess.run(["git", "add", prepared["record_path"]], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", f"retry safety\n\n{prepared['trailer']}"],
+                   cwd=repo, check=True, capture_output=True)
+
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(repo), str(clone)], check=True, capture_output=True)
+    clone_git, clone_drafts, clone_index = _open_services(clone)
+    _index_commits(clone, clone_git, clone_index, _head(clone))
+    retrieve = RetrieveService(clone_drafts, clone_index, clone_git)
+    found = retrieve.search_history(question="retry")
+    assert evidence_id in found["results"][0]["evidence_ids"]
+    assert retrieve.get_evidence(evidence_id=evidence_id)["content"] == "retry produced one result"
+
+
+def test_superseding_revision_link_survives_clone(tmp_path):
+    from commitecho.application.retrieve import RetrieveService
+    from tests.fixtures.build_fixtures import build_later_reversal
+
+    built = build_later_reversal(tmp_path)
+    source = Path(built["repo"])
+    original = json.loads(subprocess.run(
+        ["git", "show", f"{built['commit_oid_a']}:.commitecho/records/{built['record_id_a']}.json"],
+        cwd=source, check=True, capture_output=True, text=True,
+    ).stdout)
+    predecessor_id = original["decisions"][0]["revision_id"]
+
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(source), str(clone)], check=True, capture_output=True)
+    git, drafts, index = _open_services(clone)
+    _index_commits(clone, git, index, built["commit_oid_a"], built["commit_oid_b"])
+    record = RetrieveService(drafts, index, git).get_evidence(record_id=built["record_id_b"])["record"]
+    assert record["decisions"][0]["predecessor_revision_ids"] == [predecessor_id]
+
+
 # ---------------------------------------------------------------------------
 # Temporal scoping
 # ---------------------------------------------------------------------------
 
 
 class TestTemporalScoping:
-    def test_search_at_earlier_commit_excludes_later_records(self, tmp_path):
+    def test_search_at_earlier_commit_excludes_later_records(self, tmp_path, monkeypatch):
         """Records committed after at_ref must not appear in search results."""
         from commitecho.application.capture import CaptureService
         from commitecho.application.prepare import PrepareService
@@ -128,7 +199,7 @@ class TestTemporalScoping:
                 "choice": "content hash",
                 "rationale": "avoids rename bypass",
                 "disposition": "selected",
-                "code_scope": {"paths": ["src/uploads.py"]},
+                "code_scope": {"paths": ["src/uploads.py"], "line_ranges": [[3, 5]]},
             }],
         )
         (repo / "src").mkdir(exist_ok=True)
@@ -166,6 +237,7 @@ class TestTemporalScoping:
                 "choice": "token bucket",
                 "rationale": "smooth traffic",
                 "disposition": "selected",
+                "code_scope": {"paths": ["src/rate.py"], "line_ranges": [[10, 20]]},
             }],
         )
         (repo / "src" / "rate.py").write_text("class Bucket: pass\n")
@@ -203,6 +275,35 @@ class TestTemporalScoping:
         problems_b = [d["problem"] for d in result_b["results"]]
         assert any("rate" in p.lower() for p in problems_b), \
             f"Expected rate decision at B, got: {problems_b}"
+
+        assert retrieve.search_history(question="upload", path="src/rate.py")["results"] == []
+        assert len(retrieve.search_history(question="upload", path="src/uploads.py")["results"]) == 1
+        assert len(retrieve.search_history(path="src/uploads.py", line=4)["results"]) == 1
+        assert retrieve.search_history(path="src/uploads.py", line=9)["results"] == []
+        ranged = retrieve.search_history(path="src/rate.py", from_ref=commit_a, to_ref=commit_b)
+        assert [r["commit_oid"] for r in ranged["results"]] == [commit_b]
+        assert retrieve.search_history(path="src/rate.py", from_ref=commit_b,
+                                       to_ref=commit_b)["coverage"] == "full"
+        assert retrieve.search_history(path="src/rate.py", from_ref=commit_b,
+                                       to_ref=commit_b)["results"] == []
+        with pytest.raises(ValueError, match="used together"):
+            retrieve.search_history(path="src/rate.py", from_ref=commit_a)
+        with pytest.raises(ValueError, match="used together"):
+            retrieve.search_history(path="src/rate.py", at_ref=commit_b,
+                                    from_ref=commit_a, to_ref=commit_b)
+        with pytest.raises(ValueError, match="requires path"):
+            retrieve.search_history(question="rate", line=12)
+        assert retrieve.search_history(path="src/rate.py", from_ref="",
+                                       to_ref=commit_b)["coverage"] == "partial"
+
+        invalid = retrieve.search_history(question="rate", at_ref="does-not-exist")
+        assert invalid["results"] == [] and invalid["coverage"] == "partial"
+
+        def failed_history(*_args, **_kwargs):
+            raise RuntimeError("Git history unavailable")
+        monkeypatch.setattr(git3, "reachable_commit_oids", failed_history)
+        unavailable = retrieve.search_history(question="rate", at_ref=commit_b)
+        assert unavailable["results"] == [] and unavailable["coverage"] == "partial"
 
 
 # ---------------------------------------------------------------------------
@@ -252,40 +353,54 @@ class TestRangeQueries:
         assert result["merge_base"] is not None
         assert len(result["coverage_notes"]) > 0
 
-    def test_compare_history_detects_branch_conflicts(self, tmp_path):
-        """Two decisions with the same decision_id but different revision_ids in the
-        same range are reported as conflicts."""
-        from commitecho.application.retrieve import RetrieveService, _detect_conflicts
+    def test_linear_supersession_is_not_a_conflict(self, tmp_path):
+        from commitecho.application.retrieve import RetrieveService
+        from tests.fixtures.build_fixtures import build_later_reversal
 
-        # _detect_conflicts is a pure function — test directly with synthetic data
-        decisions = [
-            {
-                "revision_id": "rev-1",
-                "decision_id": "dec-A",
-                "record_id": "r1",
-                "commit_oid": "aaa",
-                "summary": "s",
-                "disposition": "selected",
-                "problem": "p",
-                "choice": "c1",
-                "rationale": "r",
-            },
-            {
-                "revision_id": "rev-2",
-                "decision_id": "dec-A",  # same decision_id, different revision
-                "record_id": "r2",
-                "commit_oid": "bbb",
-                "summary": "s",
-                "disposition": "selected",
-                "problem": "p",
-                "choice": "c2",
-                "rationale": "r",
-            },
+        built = build_later_reversal(tmp_path)
+        repo = Path(built["repo"])
+        git, drafts, index = _open_services(repo)
+        _index_commits(repo, git, index, built["commit_oid_a"], built["commit_oid_b"])
+        result = RetrieveService(drafts, index, git).compare_history(
+            from_ref=git.resolve(f"{built['commit_oid_a']}^"), to_ref=built["commit_oid_b"]
+        )
+        assert len(result["decisions"]) == 2
+        by_commit = {d["commit_oid"]: d for d in result["decisions"]}
+        old = by_commit[built["commit_oid_a"]]
+        new = by_commit[built["commit_oid_b"]]
+        assert old["decision_id"] == new["decision_id"]
+        assert old["revision_id"] in new["predecessor_revision_ids"]
+        assert result["conflicts"] == []
+
+    def test_divergent_branches_are_a_conflict(self, tmp_path):
+        from commitecho.application.retrieve import RetrieveService
+        from tests.fixtures.build_fixtures import build_branch_conflict
+
+        built = build_branch_conflict(tmp_path)
+        repo = Path(built["repo"])
+        git, drafts, index = _open_services(repo)
+        _index_commits(repo, git, index, built["main_commit_oid"], built["branch_commit_oid"])
+        result = RetrieveService(drafts, index, git).compare_history(
+            from_ref=built["main_commit_oid"], to_ref=built["branch_commit_oid"]
+        )
+        assert len(result["decisions"]) == 1  # to_ref branch only
+        assert len(result["conflicts"]) == 1
+        assert result["conflicts"][0]["decision_id"] == built["shared_decision_id"]
+        assert len(result["conflicts"][0]["conflicting_revision_ids"]) == 2
+
+    def test_explicit_predecessor_resolves_incomparable_commits(self):
+        from unittest.mock import Mock
+        from commitecho.application.retrieve import _detect_conflicts
+
+        git = Mock()
+        git.reachable_commit_oids.side_effect = lambda oid: ([oid], "full")
+        revisions = [
+            {"decision_id": "decision", "revision_id": "old", "commit_oid": "a",
+             "predecessor_revision_ids": []},
+            {"decision_id": "decision", "revision_id": "new", "commit_oid": "b",
+             "predecessor_revision_ids": ["old"]},
         ]
-        conflicts = _detect_conflicts(decisions)
-        assert len(conflicts) == 1
-        assert conflicts[0]["decision_id"] == "dec-A"
-        assert set(conflicts[0]["conflicting_revision_ids"]) == {"rev-1", "rev-2"}
+        assert _detect_conflicts(revisions, git) == []
 
 
 # ---------------------------------------------------------------------------

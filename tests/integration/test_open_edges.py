@@ -491,3 +491,114 @@ class TestIndexCLIEntrypoint:
         assert any("json" in c.lower() for c in choices), (
             f"Expected JSON logging decision, got: {choices}"
         )
+        by_path = retrieve.search_history(path="src/logger.py")
+        assert any(r["record_id"] == record_id for r in by_path["results"])
+        earlier = git.resolve("HEAD^")
+        compared = retrieve.compare_history(from_ref=earlier, to_ref="HEAD", path="src/logger.py")
+        assert any(d["record_id"] == record_id for d in compared["decisions"])
+
+    def test_index_and_compare_use_configured_git(self, tmp_path: Path, monkeypatch) -> None:
+        import shutil
+        from click.testing import CliRunner
+        from commitecho.application.retrieve import RetrieveService
+        from commitecho.transports.cli import main
+
+        repo, record_id = self._setup_committed_repo(tmp_path)
+        git_exe = shutil.which("git")
+        assert git_exe
+        empty_path = tmp_path / "empty-path"
+        empty_path.mkdir()
+        monkeypatch.setenv("COMMITECHO_GIT", git_exe)
+        monkeypatch.setenv("PATH", str(empty_path))
+
+        result = CliRunner().invoke(main, ["index", "--repo", str(repo)])
+        assert result.exit_code == 0, result.output
+        git, drafts, index = _open_services(repo)
+        assert index.execute("SELECT 1 FROM indexed_records WHERE record_id = ?", (record_id,)).fetchone()
+        compared = RetrieveService(drafts, index, git).compare_history(
+            from_ref=git.resolve("HEAD^"), to_ref="HEAD"
+        )
+        assert compared["is_ancestor"] is True
+        assert any(d["record_id"] == record_id for d in compared["decisions"])
+
+    def test_failed_insert_retries_entire_commit(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+        from commitecho.transports.cli import main
+
+        repo, record_id = self._setup_committed_repo(tmp_path)
+        git, _, index = _open_services(repo)
+        head = git.head_oid()
+        index.execute("CREATE TRIGGER fail_decision BEFORE INSERT ON indexed_decisions "
+                      "BEGIN SELECT RAISE(ABORT, 'interrupted insert'); END")
+        index.commit()
+
+        first = CliRunner().invoke(main, ["index", "--repo", str(repo)])
+        assert first.exit_code == 0
+        assert index.execute("SELECT 1 FROM indexed_commits WHERE commit_oid = ?", (head,)).fetchone() is None
+        assert index.execute("SELECT 1 FROM indexed_records WHERE record_id = ?", (record_id,)).fetchone() is None
+        assert "interrupted insert" in index.execute(
+            "SELECT error FROM index_diagnostics WHERE commit_oid = ?", (head,)
+        ).fetchone()["error"]
+
+        index.execute("DROP TRIGGER fail_decision")
+        index.commit()
+        retry = CliRunner().invoke(main, ["index", "--repo", str(repo)])
+        assert retry.exit_code == 0
+        assert index.execute("SELECT 1 FROM indexed_records WHERE record_id = ?", (record_id,)).fetchone()
+        assert index.execute("SELECT 1 FROM indexed_commits WHERE commit_oid = ?", (head,)).fetchone()
+        assert index.execute("SELECT 1 FROM index_diagnostics WHERE commit_oid = ?", (head,)).fetchone() is None
+
+    def test_old_index_is_rebuilt_with_paths(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+        from commitecho.transports.cli import main
+
+        repo, record_id = self._setup_committed_repo(tmp_path)
+        git, _, index = _open_services(repo)
+        assert CliRunner().invoke(main, ["index", "--repo", str(repo)]).exit_code == 0
+        index.execute("DELETE FROM indexed_paths")
+        index.execute("UPDATE schema_meta SET value = '2' WHERE key = 'version'")
+        index.commit()
+        index.close()
+
+        migrated = open_index_db(git.repo_info.common_dir)
+        assert migrated.execute("SELECT count(*) FROM indexed_commits").fetchone()[0] == 0
+        assert CliRunner().invoke(main, ["index", "--repo", str(repo)]).exit_code == 0
+        assert migrated.execute(
+            "SELECT 1 FROM indexed_paths p JOIN indexed_decisions d ON d.revision_id = p.revision_id "
+            "WHERE d.record_id = ? AND p.path = ?", (record_id, "src/logger.py")
+        ).fetchone()
+
+    @pytest.mark.parametrize("fault", ["schema", "identity", "json", "missing"])
+    def test_invalid_record_remains_unindexed_with_diagnostic(self, tmp_path: Path, fault: str) -> None:
+        from click.testing import CliRunner
+        from commitecho.transports.cli import main
+
+        repo, record_id = self._setup_committed_repo(tmp_path)
+        path = repo / ".commitecho" / "records" / f"{record_id}.json"
+        if fault == "missing":
+            record_id = str(uuid.uuid4())
+            (repo / "marker.txt").write_text("missing record\n")
+            _git(["git", "add", "marker.txt"], repo)
+        else:
+            data = json.loads(path.read_text())
+            if fault == "schema":
+                data["schema_version"] = 99
+            elif fault == "identity":
+                data["record_id"] = str(uuid.uuid4())
+            path.write_text("{" if fault == "json" else json.dumps(data))
+            _git(["git", "add", str(path)], repo)
+        _git(["git", "commit", "-m", f"invalid record\n\nCommitEcho-Record: {record_id}\n"], repo)
+        git, _, index = _open_services(repo)
+        head = git.head_oid()
+
+        result = CliRunner().invoke(main, ["index", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert index.execute("SELECT 1 FROM indexed_commits WHERE commit_oid = ?", (head,)).fetchone() is None
+        diagnostic = index.execute(
+            "SELECT error FROM index_diagnostics WHERE commit_oid = ?", (head,)
+        ).fetchone()["error"]
+        assert diagnostic
+        retry = CliRunner().invoke(main, ["index", "--repo", str(repo)])
+        assert retry.exit_code == 0
+        assert diagnostic in retry.output
+        assert index.execute("SELECT 1 FROM indexed_commits WHERE commit_oid = ?", (head,)).fetchone() is None

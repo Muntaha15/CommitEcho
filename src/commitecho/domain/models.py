@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -135,15 +135,15 @@ class Evidence(BaseModel):
     client: str | None = None
     observed_at: datetime = Field(default_factory=_now)
     verification_method: str | None = None
-    max_content_bytes: int = 4096  # soft cap; enforced during serialisation
+    max_content_bytes: ClassVar[int] = 4096
 
     model_config = {"frozen": True}
 
     @field_validator("content")
     @classmethod
     def _cap_content(cls, v: str | None) -> str | None:
-        if v is not None and len(v.encode()) > 65_536:
-            raise ValueError("Evidence content exceeds 64 KiB limit")
+        if v is not None and len(v.encode("utf-8")) > cls.max_content_bytes:
+            raise ValueError("Evidence content exceeds 4 KiB limit")
         return v
 
 

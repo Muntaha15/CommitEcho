@@ -36,6 +36,17 @@ def main() -> None:
     """CommitEcho – preserve and recall the decisions behind code changes."""
 
 
+@main.command()
+@click.option("--repo", default=".", show_default=True, help="Path to the Git repository to serve.")
+def serve(repo: str) -> None:
+    """Start the CommitEcho MCP server on stdio for REPO."""
+    import asyncio
+
+    from commitecho.transports.mcp_server import run_server
+
+    asyncio.run(run_server(Path(repo).resolve()))
+
+
 # ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
@@ -85,6 +96,8 @@ def doctor(repo: str | None) -> None:
     from commitecho.integrations.profiles import ALL_PROFILES, SKILL_VERSION, _SKILL_TEMPLATE
 
     ok = True
+    has_missing = False
+    has_warnings = False
 
     # Git availability
     try:
@@ -101,6 +114,7 @@ def doctor(repo: str | None) -> None:
         click.echo(f"[ok] Python {pv.major}.{pv.minor}.{pv.micro}")
     else:
         click.echo(f"[warn] Python {pv.major}.{pv.minor}.{pv.micro} – 3.12+ recommended")
+        has_warnings = True
 
     # SQLite FTS5
     try:
@@ -141,6 +155,7 @@ def doctor(repo: str | None) -> None:
             skill_file = worktree / profile.skill_path
             if not skill_file.exists():
                 click.echo(f"[missing] {profile.skill_path}: skill not installed (run 'commitecho setup')")
+                has_missing = True
             elif skill_file.read_text(encoding="utf-8") == _SKILL_TEMPLATE:
                 click.echo(f"[ok] {profile.skill_path}: skill version {SKILL_VERSION} matches")
             else:
@@ -148,17 +163,74 @@ def doctor(repo: str | None) -> None:
                     f"[warn] {profile.skill_path}: skill file differs from current version "
                     f"{SKILL_VERSION} (run 'commitecho setup' to update)"
                 )
+                has_warnings = True
+
+        # Activation instructions & rules check
+        click.echo("\n--- Activation instructions & rules ---")
+        import re
+        instr_paths_seen: set[str] = set()
+        for profile in ALL_PROFILES.values():
+            if not profile.instruction_path or profile.instruction_path in instr_paths_seen:
+                continue
+            instr_paths_seen.add(profile.instruction_path)
+            instr_file = worktree / profile.instruction_path
+            if not instr_file.exists():
+                click.echo(f"[missing] {profile.display_name}: {profile.instruction_path} not found (run 'commitecho setup')")
+                has_missing = True
+                continue
+            try:
+                content = instr_file.read_text(encoding="utf-8")
+                if getattr(profile, "instruction_format", "plain") == "rule":
+                    fm_match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+                    if not fm_match:
+                        click.echo(
+                            f"[warn] {profile.display_name}: {profile.instruction_path} missing trigger frontmatter (run 'commitecho setup')"
+                        )
+                        has_warnings = True
+                    else:
+                        fm_text = fm_match.group(1)
+                        has_trigger = bool(re.search(r"^trigger:\s*\S+", fm_text, re.MULTILINE))
+                        has_desc = bool(re.search(r"^description:\s*\S+", fm_text, re.MULTILINE))
+                        if not (has_trigger and has_desc):
+                            click.echo(
+                                f"[warn] {profile.display_name}: {profile.instruction_path} frontmatter missing trigger or description"
+                            )
+                            has_warnings = True
+                        elif "<!-- commitecho-activation -->" not in content:
+                            click.echo(
+                                f"[warn] {profile.display_name}: {profile.instruction_path} missing CommitEcho activation marker"
+                            )
+                            has_warnings = True
+                        else:
+                            click.echo(f"[ok] {profile.display_name}: valid activation rule in {profile.instruction_path}")
+                else:
+                    if "<!-- commitecho-activation -->" in content:
+                        click.echo(f"[ok] {profile.display_name}: activation block present in {profile.instruction_path}")
+                    else:
+                        click.echo(
+                            f"[warn] {profile.display_name}: {profile.instruction_path} missing CommitEcho activation block"
+                        )
+                        has_warnings = True
+            except Exception as exc:
+                click.echo(f"[fail] {profile.display_name}: could not read {profile.instruction_path}: {exc}", err=True)
+                ok = False
 
         # Client config block detection
         click.echo("\n--- Client configuration ---")
-        import json as _json
+        import tomlkit
         for profile in ALL_PROFILES.values():
             config_file = worktree / profile.mcp_config_path
             if not config_file.exists():
                 click.echo(f"[missing] {profile.display_name}: {profile.mcp_config_path} not found")
+                has_missing = True
                 continue
             try:
-                config = _json.loads(config_file.read_text(encoding="utf-8"))
+                raw = config_file.read_text(encoding="utf-8")
+                config = (
+                    tomlkit.parse(raw)
+                    if profile.config_format == "toml"
+                    else json.loads(raw)
+                )
                 servers = config.get(profile.mcp_servers_key, {})
                 if "commitecho" in servers:
                     click.echo(f"[ok] {profile.display_name}: commitecho entry present in {profile.mcp_config_path}")
@@ -167,14 +239,18 @@ def doctor(repo: str | None) -> None:
                         f"[warn] {profile.display_name}: {profile.mcp_config_path} exists "
                         "but has no 'commitecho' server entry"
                     )
+                    has_warnings = True
             except Exception as exc:
                 click.echo(f"[fail] {profile.display_name}: could not parse {profile.mcp_config_path}: {exc}", err=True)
+                ok = False
 
-    if ok:
-        click.echo("\nAll checks passed.")
-    else:
+    if not ok:
         click.echo("\nSome checks failed. See above for details.", err=True)
         sys.exit(1)
+    elif has_missing or has_warnings:
+        click.echo("\nCore checks passed; some client integrations are not installed or have warnings.")
+    else:
+        click.echo("\nAll checks passed.")
 
 
 # ---------------------------------------------------------------------------
@@ -201,12 +277,23 @@ def status(repo: str | None, change_id: str | None, as_json: bool) -> None:
     click.echo(f"Worktree:  {result['worktree']}")
     click.echo(f"HEAD:      {result['head_oid'] or '(unborn)'}")
     click.echo(f"Indexed commits: {result['indexed_commit_count']} ({result['coverage']})")
+    for note in result["coverage_notes"]:
+        click.echo(f"  {note}")
+    for diagnostic in result["index_diagnostics"]:
+        click.echo(
+            f"  {diagnostic['commit_oid'][:8]} {diagnostic['record_path']}: "
+            f"{diagnostic['error']}"
+        )
     if result["open_changes"]:
         click.echo("\nOpen changes:")
         for c in result["open_changes"]:
             click.echo(f"  [{c['status']:9}] {c['change_id'][:8]}  {c['title']}")
     else:
         click.echo("No open changes.")
+    if result["abandoned_changes"]:
+        click.echo("\nAbandoned changes:")
+        for c in result["abandoned_changes"]:
+            click.echo(f"  {c['change_id'][:8]}  {c['title']}")
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +309,6 @@ def rebuild_index(repo: str | None) -> None:
     Scans .commitecho/records/ JSON files reachable from HEAD and populates
     index.sqlite.  Safe to re-run; existing entries are skipped.
     """
-    import subprocess
     git, drafts, index = _get_git_and_dbs(repo)
     info = git.repo_info
 
@@ -232,12 +318,12 @@ def rebuild_index(repo: str | None) -> None:
         return
 
     # Enumerate all commits reachable from HEAD
-    result = subprocess.run(
-        ["git", "log", "--format=%H", head_oid],
-        capture_output=True, text=True,
-        cwd=info.worktree_dir,
-    )
-    oids = result.stdout.strip().splitlines()
+    try:
+        oids, coverage = git.reachable_commit_oids(head_oid)
+    except GitError as exc:
+        raise click.ClickException(f"Cannot traverse Git history: {exc}") from exc
+    if coverage == "partial":
+        click.echo("  [warn] Git history is incomplete; index coverage will be partial.")
     click.echo(f"Scanning {len(oids)} commits...")
 
     from datetime import datetime, timezone
@@ -250,57 +336,65 @@ def rebuild_index(repo: str | None) -> None:
         if already:
             continue
 
-        now = datetime.now(timezone.utc).isoformat()
-
-        # Always mark the commit as scanned so ancestry queries work correctly
-        # even for commits that carry no CommitEcho records.
+        record_path = "<commit>"
+        failures: list[tuple[str, str]] = []
         try:
+            trailers = git.read_commit_trailers(oid)
+            record_ids = trailers.get("CommitEcho-Record", [])
+            records = []
+            for record_id in record_ids:
+                record_path = f".commitecho/records/{record_id}.json"
+                try:
+                    content = git.read_file_from_commit(oid, record_path)
+                    if content is None:
+                        raise ValueError("record file not found")
+                    raw = content.decode("utf-8")
+                    data = json.loads(raw)
+                    _validate_record(data, record_id)
+                    records.append((record_id, record_path, data, raw))
+                except Exception as exc:
+                    failures.append((record_path, str(exc)))
+            if failures:
+                raise ValueError(f"{len(failures)} invalid record(s)")
+
             parent_oid: str | None = None
             try:
                 parent_oid = git.resolve(f"{oid}^")
             except Exception:
                 pass  # root commit
-            index.execute(
-                "INSERT OR IGNORE INTO indexed_commits "
-                "(commit_oid, repository_id, parent_oid, indexed_at) VALUES (?, ?, ?, ?)",
-                (oid, info.common_dir, parent_oid, now),
-            )
-            index.commit()
+            with index:
+                index.execute(
+                    "INSERT INTO indexed_commits "
+                    "(commit_oid, repository_id, parent_oid, indexed_at) VALUES (?, ?, ?, ?)",
+                    (oid, info.common_dir, parent_oid, datetime.now(timezone.utc).isoformat()),
+                )
+                for record_id, record_path, data, raw in records:
+                    _index_record(index, oid, record_id, record_path, data, raw)
+                index.execute("DELETE FROM index_diagnostics WHERE commit_oid = ?", (oid,))
+            indexed += len(records)
         except Exception as exc:
-            click.echo(f"  [warn] {oid[:8]}: could not mark commit: {exc}")
-            continue
-
-        # Check for CommitEcho-Record trailer
-        trailers = git.read_commit_trailers(oid)
-        record_ids = trailers.get("CommitEcho-Record", [])
-        if not record_ids:
-            continue
-
-        for record_id in record_ids:
-            record_path = f".commitecho/records/{record_id}.json"
-            # Read the record blob from the commit tree
-            read_result = subprocess.run(
-                ["git", "show", f"{oid}:{record_path}"],
-                capture_output=True, text=True,
-                cwd=info.worktree_dir,
-            )
-            if read_result.returncode != 0:
-                click.echo(f"  [warn] {oid[:8]}: record file not found at {record_path}")
-                continue
-            try:
-                raw = read_result.stdout
-                record_data = json.loads(raw)
-                _index_record(index, oid, record_id, record_path, record_data, raw)
-                indexed += 1
-            except Exception as exc:
-                click.echo(f"  [warn] {oid[:8]}: failed to parse {record_path}: {exc}")
+            with index:
+                for failed_path, error in failures or [(record_path, str(exc))]:
+                    index.execute(
+                        "INSERT OR REPLACE INTO index_diagnostics "
+                        "(commit_oid, record_path, error, observed_at) VALUES (?, ?, ?, ?)",
+                        (oid, failed_path, error, datetime.now(timezone.utc).isoformat()),
+                    )
+                    click.echo(f"  [warn] {oid[:8]}: {failed_path}: {error}")
 
     click.echo(f"Indexed {indexed} new records.")
 
 
 def _index_record(index, commit_oid: str, record_id: str, record_path: str, data: dict, raw: str) -> None:
     from datetime import datetime, timezone
+    _validate_record(data, record_id)
     now = datetime.now(timezone.utc).isoformat()
+
+    existing = index.execute(
+        "SELECT raw_json FROM indexed_records WHERE record_id = ?", (record_id,)
+    ).fetchone()
+    if existing is not None and json.loads(existing["raw_json"]) != data:
+        raise ValueError(f"Record '{record_id}' has different content in another commit")
 
     index.execute(
         """
@@ -319,12 +413,16 @@ def _index_record(index, commit_oid: str, record_id: str, record_path: str, data
             now,
         ),
     )
+    index.execute(
+        "INSERT OR IGNORE INTO indexed_commit_records (commit_oid, record_id, record_path) VALUES (?, ?, ?)",
+        (commit_oid, record_id, record_path),
+    )
 
     for decision in data.get("decisions", []):
         rev_id = decision.get("revision_id", "")
         if not rev_id:
             continue
-        index.execute(
+        inserted = index.execute(
             """
             INSERT OR IGNORE INTO indexed_decisions
                 (revision_id, record_id, decision_id, disposition, problem, choice, rationale, captured_at)
@@ -341,12 +439,17 @@ def _index_record(index, commit_oid: str, record_id: str, record_path: str, data
                 decision.get("captured_at", now),
             ),
         )
+        index.execute(
+            "INSERT OR IGNORE INTO indexed_record_decisions (record_id, revision_id) VALUES (?, ?)",
+            (record_id, rev_id),
+        )
         # Index paths
-        for path in decision.get("paths", []):
-            index.execute(
-                "INSERT INTO indexed_paths (revision_id, path) VALUES (?, ?)",
-                (rev_id, path),
-            )
+        if inserted.rowcount:
+            for path in decision.get("code_scope", {}).get("paths", []):
+                index.execute(
+                    "INSERT INTO indexed_paths (revision_id, path) VALUES (?, ?)",
+                    (rev_id, path),
+                )
         # FTS5 insert — guard against duplicates (FTS5 has no OR IGNORE)
         fts_exists = index.execute(
             "SELECT 1 FROM decisions_fts WHERE revision_id = ?", (rev_id,)
@@ -357,7 +460,29 @@ def _index_record(index, commit_oid: str, record_id: str, record_path: str, data
                 (rev_id, decision.get("problem", ""), decision.get("choice", ""), decision.get("rationale", "")),
             )
 
-    index.commit()
+
+
+def _validate_record(data: dict, record_id: str) -> None:
+    from uuid import UUID
+
+    from commitecho.domain.models import CommitRecord
+
+    if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1:
+        raise ValueError("unsupported or missing record schema version")
+    if data.get("record_id") != record_id:
+        raise ValueError("record ID does not match commit trailer")
+    if str(UUID(record_id)) != record_id:
+        raise ValueError("record ID is not a canonical UUID")
+    for field in ("change_id", "summary", "prepared_for", "decisions", "evidence", "created_at"):
+        if field not in data:
+            raise ValueError(f"missing record field: {field}")
+    for decision in data["decisions"]:
+        if "decision_id" not in decision or "revision_id" not in decision:
+            raise ValueError("decision identity is missing")
+    for evidence in data["evidence"]:
+        if "evidence_id" not in evidence:
+            raise ValueError("evidence identity is missing")
+    CommitRecord.model_validate(data)
 
 
 # ---------------------------------------------------------------------------
@@ -397,14 +522,15 @@ def show(record_id: str, repo: str | None) -> None:
 @main.command()
 @click.argument("commit_oid")
 @click.option("--record-id", default=None)
+@click.option("--keep-open", is_flag=True, help="Keep this change open for another commit.")
 @click.option("--repo", default=None)
-def verify(commit_oid: str, record_id: str | None, repo: str | None) -> None:
+def verify(commit_oid: str, record_id: str | None, keep_open: bool, repo: str | None) -> None:
     """Verify that COMMIT_OID correctly carries its CommitEcho record."""
     from commitecho.application.verify import VerifyService
 
     git, drafts, index = _get_git_and_dbs(repo)
     svc = VerifyService(drafts, index, git)
-    result = svc.verify_commit(commit_oid=commit_oid, record_id=record_id)
+    result = svc.verify_commit(commit_oid=commit_oid, record_id=record_id, keep_open=keep_open)
     click.echo(json.dumps(result, indent=2, default=str))
     if result.get("outcome") != "exact":
         sys.exit(1)
@@ -457,21 +583,41 @@ def diff(from_ref: str, to_ref: str, path_filter: str | None, repo: str | None, 
 @click.option("--repo", default=None)
 @click.option("--output", "-o", default=None, help="Output file path (default: stdout).")
 def export(change_id: str, repo: str | None, output: str | None) -> None:
-    """Export draft decision records for CHANGE_ID as JSON.
-
-    This is for backup/handoff purposes.  Exported content has not been committed.
-    """
+    """Export a readable snapshot of draft decisions for CHANGE_ID as JSON."""
     git, drafts, index = _get_git_and_dbs(repo)
 
     rows = drafts.execute(
-        "SELECT * FROM decision_revisions WHERE change_id = ?", (change_id,)
+        "SELECT * FROM decision_revisions WHERE change_id = ? ORDER BY captured_at, revision_id", (change_id,)
     ).fetchall()
     if not rows:
         click.echo(f"No decisions found for change '{change_id}'.", err=True)
         sys.exit(1)
 
-    exported = [dict(r) for r in rows]
-    payload = json.dumps({"change_id": change_id, "decisions": exported}, indent=2, default=str)
+    exported = []
+    evidence_ids = set()
+    for row in rows:
+        decision = dict(row)
+        for field in ("alternatives", "code_scope", "evidence_ids"):
+            decision[field] = json.loads(decision[field])
+        decision["predecessor_revision_ids"] = [
+            r["predecessor_id"] for r in drafts.execute(
+                "SELECT predecessor_id FROM revision_predecessors WHERE revision_id = ? ORDER BY predecessor_id",
+                (decision["revision_id"],),
+            )
+        ]
+        evidence_ids.update(decision["evidence_ids"])
+        for alternative in decision["alternatives"]:
+            evidence_ids.update(alternative.get("evidence_ids", []))
+        exported.append(decision)
+    evidence = [dict(r) for r in drafts.execute(
+        "SELECT * FROM evidence WHERE change_id = ? ORDER BY evidence_id", (change_id,)
+    ) if r["evidence_id"] in evidence_ids]
+    payload = json.dumps({
+        "format": "commitecho-draft-snapshot-v1",
+        "change_id": change_id,
+        "decisions": exported,
+        "evidence": evidence,
+    }, indent=2)
 
     if output:
         Path(output).write_text(payload, encoding="utf-8")
@@ -532,4 +678,3 @@ def setup(client_ids: tuple[str, ...], repo: str | None, server_cmd: str | None,
         click.echo("\n(dry-run: no files were written)")
     else:
         click.echo("\nSetup complete.")
-

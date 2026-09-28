@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from commitecho.storage.repository import (
     check_operation,
     get_change,
     insert_commit_record,
+    record_operation,
     update_change_status,
 )
 
@@ -31,6 +33,31 @@ def _now() -> datetime:
 
 
 _ROOT_OID = "0" * 40
+_CREDENTIAL = re.compile(
+    r"(?i)(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|"
+    r"\b(?:api[_-]?key|password|secret|access[_-]?token|auth[_-]?token)\s*[:=]\s*['\"]?\S{8,}|"
+    r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,})\b)"
+)
+_PRIVATE_PATH = re.compile(r"(?i)(?:[A-Z]:\\Users\\|/(?:Users|home)/)[^/\\\s]+")
+
+
+def _check_portable_record(record: CommitRecord) -> None:
+    if len(record.model_dump_json(indent=2).encode("utf-8")) > 65_536:
+        raise ValueError("Portable record exceeds 64 KiB limit")
+
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from strings(item)
+
+    for value in strings(record.model_dump(mode="json")):
+        if _CREDENTIAL.search(value) or _PRIVATE_PATH.search(value):
+            raise ValueError("Portable record may contain a credential or private path; edit the draft before preparing")
 
 
 class IndexChangedError(Exception):
@@ -64,78 +91,75 @@ class PrepareService:
         Raises IndexChangedError if HEAD or the staged index moves between the
         initial snapshot and the moment the record is written.
         """
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            response, record = self._prepare_commit(
+                change_id, expected_revision, selected_revision_ids, summary, operation_id
+            )
+        # A committed preparation can survive a crash before this write. A replay
+        # restores the same bytes from commit_records.record_json.
+        self._write_record_file(record)
+        return response
+
+    def _prepare_commit(self, change_id, expected_revision, selected_revision_ids,
+                        summary, operation_id):
         payload = {
             "change_id": change_id,
-            "operation_id": operation_id,
             "expected_revision": expected_revision,
+            "selected_revision_ids": selected_revision_ids,
+            "summary": summary,
         }
-        already_done = check_operation(self._conn, operation_id, "prepare_commit", payload)
-
         change = get_change(self._conn, change_id)
         if change is None:
             raise ValueError(f"Change '{change_id}' not found.")
-        if change.revision_counter != expected_revision and not already_done:
+        if change.worktree_id != self._git.repo_info.worktree_id:
+            raise ValueError(f"Change '{change_id}' belongs to another worktree.")
+
+        replay = check_operation(self._conn, operation_id, "prepare_commit", payload)
+        if replay is not None:
+            row = self._conn.execute(
+                "SELECT record_json FROM commit_records WHERE record_id = ?",
+                (replay["record_id"],),
+            ).fetchone()
+            if row is None or row["record_json"] is None:
+                raise RuntimeError("Prepared record missing for completed operation.")
+            return replay, row["record_json"]
+
+        if change.status not in (ChangeStatus.OPEN, ChangeStatus.PREPARED):
+            raise ValueError(
+                f"Change '{change_id}' is {change.status.value} and cannot be prepared."
+            )
+        if change.revision_counter != expected_revision:
             raise ValueError(
                 f"Optimistic conflict: expected revision {expected_revision}, "
                 f"actual {change.revision_counter}."
             )
 
-        # Idempotent replay: return the original record's path without re-writing.
-        if already_done:
-            orig_row = self._conn.execute(
-                "SELECT record_id, code_manifest_sha256 FROM commit_records "
-                "WHERE change_id = ? ORDER BY created_at DESC LIMIT 1",
-                (change_id,),
-            ).fetchone()
-            if orig_row is None:
-                raise RuntimeError(
-                    "Idempotent replay of prepare_commit but no commit_record found for "
-                    f"change '{change_id}'."
-                )
-            orig_id = orig_row["record_id"]
-            orig_digest = orig_row["code_manifest_sha256"]
-            orig_record = CommitRecord.__new__(CommitRecord)
-            # Reconstruct a minimal object just to derive path/trailer from the original ID.
-            # We use model_construct to bypass validation — all we need are the two ID fields.
-            orig_record = CommitRecord.model_construct(
-                record_id=orig_id,
-                change_id=change_id,
-            )
-            staged_before = self._git.staged_changes()
-            staged_paths = {
-                e.path for e in staged_before
-                if not e.path.startswith(_COMMITECHO_RECORD_PREFIX)
-            }
-            return {
-                "record_id": orig_id,
-                "record_path": orig_record.record_path(),
-                "trailer": orig_record.trailer(),
-                "staged_paths": sorted(staged_paths),
-                "uncovered_paths": [],
-                "code_manifest_sha256": orig_digest,
-            }
-
         # Fetch the selected decision revisions
         revisions: list[DecisionRevision] = []
         for rev_id in selected_revision_ids:
             row = self._conn.execute(
-                "SELECT * FROM decision_revisions WHERE revision_id = ?", (rev_id,)
+                "SELECT * FROM decision_revisions WHERE revision_id = ? AND change_id = ?",
+                (rev_id, change_id),
             ).fetchone()
             if row is None:
-                raise ValueError(f"Decision revision '{rev_id}' not found.")
-            revisions.append(_row_to_revision(row))
+                raise ValueError(f"Decision revision '{rev_id}' does not belong to change '{change_id}'.")
+            revisions.append(_row_to_revision(self._conn, row))
 
         # Fetch evidence referenced by any selected revision
         all_ev_ids: set[str] = set()
         for rev in revisions:
             all_ev_ids.update(rev.evidence_ids)
+            for alternative in rev.alternatives:
+                all_ev_ids.update(alternative.evidence_ids)
         evidence_items: list[Evidence] = []
         for ev_id in all_ev_ids:
             row = self._conn.execute(
-                "SELECT * FROM evidence WHERE evidence_id = ?", (ev_id,)
+                "SELECT * FROM evidence WHERE evidence_id = ? AND change_id = ?", (ev_id, change_id)
             ).fetchone()
-            if row:
-                evidence_items.append(_row_to_evidence(row))
+            if row is None:
+                raise ValueError(f"Evidence '{ev_id}' does not belong to change '{change_id}'.")
+            evidence_items.append(_row_to_evidence(row))
 
         # --- Snapshot 1: freeze HEAD and index digest -------------------------
         head_oid_before = self._git.head_oid() or _ROOT_OID
@@ -161,6 +185,7 @@ class PrepareService:
             decisions=revisions,
             evidence=evidence_items,
         )
+        _check_portable_record(record)
 
         # --- Snapshot 2: re-check before writing ------------------------------
         head_oid_after = self._git.head_oid() or _ROOT_OID
@@ -171,11 +196,10 @@ class PrepareService:
                 "Stage your changes again and retry with a new operation_id."
             )
         # ----------------------------------------------------------------------
-        self._write_record_file(record)
         insert_commit_record(self._conn, record)
         update_change_status(self._conn, change_id, ChangeStatus.PREPARED)
 
-        return {
+        response = {
             "record_id": record.record_id,
             "record_path": record.record_path(),
             "trailer": record.trailer(),
@@ -183,17 +207,23 @@ class PrepareService:
             "uncovered_paths": uncovered,
             "code_manifest_sha256": digest_before,
         }
+        record_operation(self._conn, operation_id, "prepare_commit", payload, response)
+        return response, record
 
-    def _write_record_file(self, record: CommitRecord) -> None:
+    def _write_record_file(self, record: CommitRecord | str) -> None:
         """Write the record JSON to the worktree, atomically."""
         import os, tempfile
 
+        record_json = record if isinstance(record, str) else record.model_dump_json(indent=2)
+        portable = CommitRecord.model_validate_json(record_json) if isinstance(record, str) else record
+        _check_portable_record(portable)
+        record_path = portable.record_path()
         worktree = self._git.repo_info.worktree_dir
-        dest = Path(worktree) / record.record_path()
+        dest = Path(worktree) / record_path
 
         if dest.exists():
             existing = dest.read_bytes()
-            new_bytes = record.model_dump_json(indent=2).encode()
+            new_bytes = record_json.encode("utf-8")
             if existing != new_bytes:
                 raise RuntimeError(
                     f"Record file already exists at {dest} with different content. "
@@ -217,8 +247,8 @@ class PrepareService:
         # Atomic write via temp file + rename
         fd, tmp_path = tempfile.mkstemp(dir=dest.parent, prefix=".commitecho_tmp_")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(record.model_dump_json(indent=2))
+            with os.fdopen(fd, "wb") as f:
+                f.write(record_json.encode("utf-8"))
             Path(tmp_path).rename(dest)
         except Exception:
             try:
@@ -228,7 +258,7 @@ class PrepareService:
             raise
 
 
-def _row_to_revision(row: Any) -> DecisionRevision:
+def _row_to_revision(conn: sqlite3.Connection, row: Any) -> DecisionRevision:
     from commitecho.domain.models import (
         Alternative,
         CodeScope,
@@ -239,12 +269,15 @@ def _row_to_revision(row: Any) -> DecisionRevision:
     alts_raw = _json.loads(row["alternatives"])
     scope_raw = _json.loads(row["code_scope"])
     ev_ids = _json.loads(row["evidence_ids"])
-    preds_rows = []  # filled separately if needed; OK for prepare
+    predecessor_ids = [r["predecessor_id"] for r in conn.execute(
+        "SELECT predecessor_id FROM revision_predecessors WHERE revision_id = ? ORDER BY predecessor_id",
+        (row["revision_id"],),
+    )]
 
     return DecisionRevision(
         decision_id=row["decision_id"],
         revision_id=row["revision_id"],
-        predecessor_revision_ids=preds_rows,
+        predecessor_revision_ids=predecessor_ids,
         disposition=DecisionDisposition(row["disposition"]),
         problem=row["problem"],
         choice=row["choice"],

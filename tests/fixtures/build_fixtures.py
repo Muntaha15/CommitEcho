@@ -236,7 +236,7 @@ def build_later_reversal(base: Path) -> dict:
         operation_id=str(uuid.uuid4()),
         decisions=[
             {
-                "decision_id": str(uuid.uuid4()),  # same decision_id could link, here independent
+                "decision_id": json.loads((repo / result_a["record_path"]).read_text())["decisions"][0]["decision_id"],
                 "problem": "rapid input generates too many API calls",
                 "choice": "reduce debounce to 150 ms after profiling",
                 "rationale": (
@@ -320,7 +320,7 @@ def build_branch_conflict(base: Path) -> dict:
     )
 
     # Branch: feature/redis-queue
-    _git(["git", "checkout", "-b", "feature/redis-queue"], repo)
+    _git(["git", "checkout", "-b", "feature/redis-queue", f"{result_main['commit_oid']}^"], repo)
     git3, drafts3, index3 = _open_services(repo)
 
     result_branch = _full_workflow(

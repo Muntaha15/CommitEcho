@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import tomlkit
+
 # ---------------------------------------------------------------------------
 # Skill asset – loaded from the bundled skill.md file at import time
 # ---------------------------------------------------------------------------
@@ -39,6 +41,8 @@ class ClientProfile:
     skill_path: str
     # Path relative to the project root for activation instructions
     instruction_path: str | None
+    config_format: str = "json"
+    instruction_format: str = "plain"
     # Known limitations for this client
     known_limitations: list[str] = field(default_factory=list)
 
@@ -62,8 +66,9 @@ class ClientProfile:
 CODEX = ClientProfile(
     client_id="codex",
     display_name="Codex (local)",
-    mcp_config_path=".codex/mcp.json",
-    mcp_servers_key="mcpServers",
+    mcp_config_path=".codex/config.toml",
+    mcp_servers_key="mcp_servers",
+    config_format="toml",
     skill_path=".codex/skills/commitecho.md",
     instruction_path=".codex/AGENTS.md",
     known_limitations=[
@@ -77,8 +82,9 @@ ANTIGRAVITY = ClientProfile(
     display_name="Antigravity IDE",
     mcp_config_path=".agents/mcp_config.json",
     mcp_servers_key="mcpServers",
-    skill_path=".agents/skills/commitecho.md",
-    instruction_path=None,  # uses persistent rules instead
+    skill_path=".agents/skills/commitecho/SKILL.md",
+    instruction_path=".agents/rules/commitecho.md",
+    instruction_format="rule",
     known_limitations=[
         "IDE and CLI hook parity not assumed.",
         "Use skills rather than legacy Workflows (deprecated).",
@@ -154,9 +160,10 @@ class SetupGenerator:
         servers_key = profile.mcp_servers_key
 
         if config_file.exists():
-            config = json.loads(config_file.read_text(encoding="utf-8"))
+            raw = config_file.read_text(encoding="utf-8")
+            config = tomlkit.parse(raw) if profile.config_format == "toml" else json.loads(raw)
         else:
-            config = {}
+            config = tomlkit.document() if profile.config_format == "toml" else {}
 
         servers = config.setdefault(servers_key, {})
         if "commitecho" in servers:
@@ -170,7 +177,12 @@ class SetupGenerator:
 
         if not dry_run:
             config_file.parent.mkdir(parents=True, exist_ok=True)
-            config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+            rendered = (
+                tomlkit.dumps(config)
+                if profile.config_format == "toml"
+                else json.dumps(config, indent=2)
+            )
+            config_file.write_text(rendered, encoding="utf-8")
 
         return [action]
 
@@ -194,6 +206,8 @@ class SetupGenerator:
     def _update_instructions(self, profile: ClientProfile, *, dry_run: bool) -> list[str]:
         if not profile.instruction_path:
             return []
+        if getattr(profile, "instruction_format", "plain") == "rule":
+            return self._update_rule(profile, dry_run=dry_run)
         instr_file = self._root / profile.instruction_path
         block = _ACTIVATION_BLOCK
 
@@ -213,6 +227,71 @@ class SetupGenerator:
 
         return [action]
 
+    def _update_rule(self, profile: ClientProfile, *, dry_run: bool) -> list[str]:
+        assert profile.instruction_path is not None
+        rule_file = self._root / profile.instruction_path
+
+        if not rule_file.exists():
+            action = f"[create] {profile.instruction_path}: create CommitEcho activation rule."
+            new_content = _ANTIGRAVITY_RULE_CONTENT
+        else:
+            raw = rule_file.read_text(encoding="utf-8")
+            if raw.strip() == _ANTIGRAVITY_RULE_CONTENT.strip():
+                return [f"[skip] {profile.instruction_path}: activation rule already up to date."]
+
+            # Check if valid frontmatter exists
+            fm_match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n(.*))?$", raw, re.DOTALL)
+            if fm_match:
+                fm_text = fm_match.group(1)
+                has_trigger = bool(re.search(r"^trigger:\s*\S+", fm_text, re.MULTILINE))
+                has_desc = bool(re.search(r"^description:\s*\S+", fm_text, re.MULTILINE))
+                has_marker = _ACTIVATION_MARKER in raw
+
+                if has_trigger and has_desc and has_marker:
+                    return [f"[skip] {profile.instruction_path}: activation rule already up to date."]
+                else:
+                    return [
+                        f"[skip] {profile.instruction_path}: custom frontmatter found but missing trigger/description; "
+                        "leaving intact (please configure 'trigger: always_on' and 'description: ...' manually)."
+                    ]
+            else:
+                # No frontmatter. Check if this is the known generated legacy rule
+                has_marker = _ACTIVATION_MARKER in raw
+                cleaned = raw.replace(_ACTIVATION_MARKER, "").strip()
+                known_legacy_phrases = [
+                    "## CommitEcho – decision capture and recall",
+                    "## CommitEcho - decision capture and recall",
+                    "# CommitEcho – decision capture and recall",
+                    "# CommitEcho - decision capture and recall",
+                    "# CommitEcho",
+                    "Use the CommitEcho MCP tools to preserve and recall the reasoning behind code changes.",
+                    "Activate the commitecho skill for detailed capture/recall steps.",
+                ]
+                remainder = cleaned
+                for phrase in known_legacy_phrases:
+                    remainder = remainder.replace(phrase, "")
+                is_known_legacy = (remainder.strip() == "")
+
+                if has_marker and is_known_legacy:
+                    action = f"[update] {profile.instruction_path}: repair legacy activation rule with trigger frontmatter."
+                    new_content = _ANTIGRAVITY_RULE_CONTENT
+                elif has_marker and not is_known_legacy:
+                    return [
+                        f"[skip] {profile.instruction_path}: contains custom instructions without rule frontmatter; "
+                        "leaving custom content intact (add frontmatter with 'trigger: always_on' manually)."
+                    ]
+                else:
+                    return [
+                        f"[skip] {profile.instruction_path}: existing file without CommitEcho activation marker; "
+                        "leaving intact to avoid overwriting custom content."
+                    ]
+
+        if not dry_run:
+            rule_file.parent.mkdir(parents=True, exist_ok=True)
+            rule_file.write_text(new_content, encoding="utf-8")
+
+        return [action]
+
 
 # ---------------------------------------------------------------------------
 # Shared activation block (appended to per-client instruction files)
@@ -226,4 +305,21 @@ _ACTIVATION_BLOCK = f"""{_ACTIVATION_MARKER}
 Use the CommitEcho MCP tools to preserve and recall the reasoning behind code changes.
 
 Activate the commitecho skill for detailed capture/recall steps.
+"""
+
+_ANTIGRAVITY_RULE_CONTENT = f"""---
+trigger: always_on
+description: Capture meaningful coding decisions and recall their evidence.
+---
+{_ACTIVATION_MARKER}
+# CommitEcho decision capture and recall
+
+When working on code or design tasks in this repository:
+- Read the installed CommitEcho skill for meaningful code/design tasks.
+- Begin or resume a change and record actual choices/rejections.
+- Search history and fetch evidence for historical questions.
+- Prepare and verify records when committing is authorized.
+- Report unavailable tools rather than inventing successful capture.
+
+Loading this rule does not imply permission to make Git commits; follow normal project authorization.
 """

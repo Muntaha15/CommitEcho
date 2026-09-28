@@ -4,7 +4,7 @@ Preserve the decisions behind code changes and recall them through your coding a
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.1.0 implementation in progress.** The local MCP server, CLI, storage, Git adapter, fixtures, and automated tests exist. Real client workflow validation and release gates are still pending.
+**Status: v0.1.0 implementation in progress.** The local MCP server, CLI, storage, Git adapter, fixtures, and automated tests exist. Codex and Antigravity have been smoke-tested with the earlier MCP SDK; the complete three-client workflow and release gates are still pending.
 
 ## Install
 
@@ -18,7 +18,7 @@ Or, with [uv](https://github.com/astral-sh/uv) (recommended):
 uv pip install .
 ```
 
-Requires Python 3.12+ and Git 2.34+. No external service or model API is needed.
+Requires Python 3.12+, Git 2.34+, and MCP Python SDK 2.2+ (installed with the package). No external service or model API is needed.
 
 ---
 
@@ -61,9 +61,12 @@ Walks commits reachable from `HEAD`, reads records referenced by `CommitEcho-Rec
 ```bash
 commitecho verify <commit_oid>
 commitecho verify <commit_oid> --record-id <record_id>
+commitecho verify <commit_oid> --keep-open  # another commit will follow for this change
 ```
 
-Returns one of `exact`, `declared_changed`, `contained_only`, `unverifiable`, or `invalid` and explains why. Exact verification currently needs the local draft database.
+Returns one of `exact`, `declared_changed`, `contained_only`, `unverifiable`, or `invalid` and explains why. `exact` means the committed record, trailer, parent, and code fingerprint agree. When the local draft exists, verification also compares the committed bytes with the prepared digest; `details.local_preparation_verified` reports that stronger check. A fresh clone can establish a self-consistent `exact` binding, but cannot authenticate the original preparation or the truth of the rationale.
+
+An exact local verification closes the prepared change by default. Use `--keep-open` (or MCP `keep_open: true`) for an intermediate commit; it returns the change to `open` so the next commit can use the same change ID. Failed verification leaves it `prepared`. Status lists abandoned changes separately from open work.
 
 ### Show a record
 
@@ -78,7 +81,9 @@ commitecho diff main feature/my-branch
 commitecho diff main feature/my-branch --path src/api_client.py
 ```
 
-### Export a record
+### Export draft decisions
+
+`export` writes a readable JSON snapshot of a change's draft decisions, predecessor links, and referenced evidence. It is useful for review or handoff. It is not a restorable database backup and does not include sessions, operations, or prepared commit records. The snapshot may contain private evidence; review it before sharing.
 
 ```bash
 commitecho export <change_id>
@@ -95,7 +100,7 @@ commitecho setup --client copilot_vscode
 commitecho setup --client codex --dry-run
 ```
 
-Without `--client`, setup configures all three profiles. It writes the MCP server config and shared skill; Codex and Copilot also receive an activation instruction block. Antigravity currently receives no persistent rule from setup. Dry-run lists planned changes rather than a file diff. Test the generated configuration in your client before relying on automatic capture.
+Without `--client`, setup configures all three profiles. It writes the MCP server config and shared skill; Codex and Copilot receive an activation instruction block, and Antigravity receives a persistent activation rule (`trigger: always_on`). Dry-run lists planned changes rather than a file diff. Test the generated configuration in your client before relying on automatic capture.
 
 ---
 
@@ -110,7 +115,7 @@ python -m commitecho serve --repo .
 Or, when invoked by a client that manages its own process lifecycle:
 
 ```bash
-commitecho setup --client codex   # writes the correct command into .codex/mcp.json
+commitecho setup --client codex   # writes the correct command into .codex/config.toml
 ```
 
 The server exposes eight MCP tools:
@@ -136,9 +141,12 @@ After running `commitecho setup --client codex` the following files are written 
 
 | File | Purpose |
 |---|---|
-| `.codex/mcp.json` | Registers the `commitecho` MCP server entry |
+| `.codex/config.toml` | Registers the `commitecho` MCP server entry for trusted Codex projects |
 | `.codex/skills/commitecho.md` | Shared capture/recall skill |
 | `.codex/AGENTS.md` | Activation instruction block |
+
+Codex loads project-local configuration only after the project is trusted. Setup does not change
+the user's global trust settings.
 
 ### Antigravity IDE
 
@@ -148,8 +156,11 @@ commitecho setup --client antigravity
 
 | File | Purpose |
 |---|---|
-| `.agents/mcp_config.json` | Registers the `commitecho` MCP server entry |
-| `.agents/skills/commitecho.md` | Shared capture/recall skill |
+| `.agents/mcp_config.json` | Registers the `commitecho` MCP server entry under `mcpServers` |
+| `.agents/skills/commitecho/SKILL.md` | Shared capture/recall skill (folder-based) |
+| `.agents/rules/commitecho.md` | Persistent activation rule (`trigger: always_on`) |
+
+After running setup, reload MCP servers using the Antigravity UI (**Additional Options (...) > MCP Servers** or `/mcp` in chat) or start a new session with the repository. Always install CommitEcho into the same Python environment that launches the server.
 
 ### GitHub Copilot in VS Code
 
@@ -200,6 +211,8 @@ search_history(question="content hash")
 # → returns matching decision summaries; call get_evidence(record_id=...) for the full record and alternatives
 ```
 
+Portable records are limited to 64 KiB, with 4 KiB of inline content per evidence item. Preparation rejects likely credentials and private home paths before writing JSON; edit the draft and retry. This check is best effort, so review the record before committing it.
+
 ---
 
 ## Evaluation
@@ -228,13 +241,14 @@ python tests/evals/baseline_comparison.py
 
 Compares the information present in git diff/blame, stored excerpts, and CommitEcho structured recall on the same question set. It does not invoke an LLM or measure answer quality.
 
-### Run all tests (including eval scenarios as pytest)
+### Run all tests (including fixture evaluations)
 
 ```bash
-pytest
+python -m pip install -e ".[test]"
+python -m pytest
 ```
 
-Build fixtures first to include the fixture-based evaluations.
+Pytest builds isolated fixture repositories and runs both deterministic evaluation modules. The baseline comparison checks recorded context, not answer quality.
 
 ---
 
