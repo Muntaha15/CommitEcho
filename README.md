@@ -235,14 +235,14 @@ python tests/evals/baseline_comparison.py
 
 Compares the information present in git diff/blame, stored excerpts, and CommitEcho structured recall on the same question set. It does not invoke an LLM or measure answer quality.
 
-### Run all tests (including eval scenarios as pytest)
+### Run all tests (including fixture evaluations)
 
 ```bash
 python -m pip install -e ".[test]"
 python -m pytest
 ```
 
-Build fixtures first to include the fixture-based evaluations.
+Pytest builds isolated fixture repositories and runs both deterministic evaluation modules. The baseline comparison checks recorded context, not answer quality.
 
 ---
 
