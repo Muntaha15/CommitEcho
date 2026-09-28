@@ -511,21 +511,41 @@ def diff(from_ref: str, to_ref: str, path_filter: str | None, repo: str | None, 
 @click.option("--repo", default=None)
 @click.option("--output", "-o", default=None, help="Output file path (default: stdout).")
 def export(change_id: str, repo: str | None, output: str | None) -> None:
-    """Export draft decision records for CHANGE_ID as JSON.
-
-    This is for backup/handoff purposes.  Exported content has not been committed.
-    """
+    """Export a readable snapshot of draft decisions for CHANGE_ID as JSON."""
     git, drafts, index = _get_git_and_dbs(repo)
 
     rows = drafts.execute(
-        "SELECT * FROM decision_revisions WHERE change_id = ?", (change_id,)
+        "SELECT * FROM decision_revisions WHERE change_id = ? ORDER BY captured_at, revision_id", (change_id,)
     ).fetchall()
     if not rows:
         click.echo(f"No decisions found for change '{change_id}'.", err=True)
         sys.exit(1)
 
-    exported = [dict(r) for r in rows]
-    payload = json.dumps({"change_id": change_id, "decisions": exported}, indent=2, default=str)
+    exported = []
+    evidence_ids = set()
+    for row in rows:
+        decision = dict(row)
+        for field in ("alternatives", "code_scope", "evidence_ids"):
+            decision[field] = json.loads(decision[field])
+        decision["predecessor_revision_ids"] = [
+            r["predecessor_id"] for r in drafts.execute(
+                "SELECT predecessor_id FROM revision_predecessors WHERE revision_id = ? ORDER BY predecessor_id",
+                (decision["revision_id"],),
+            )
+        ]
+        evidence_ids.update(decision["evidence_ids"])
+        for alternative in decision["alternatives"]:
+            evidence_ids.update(alternative.get("evidence_ids", []))
+        exported.append(decision)
+    evidence = [dict(r) for r in drafts.execute(
+        "SELECT * FROM evidence WHERE change_id = ? ORDER BY evidence_id", (change_id,)
+    ) if r["evidence_id"] in evidence_ids]
+    payload = json.dumps({
+        "format": "commitecho-draft-snapshot-v1",
+        "change_id": change_id,
+        "decisions": exported,
+        "evidence": evidence,
+    }, indent=2)
 
     if output:
         Path(output).write_text(payload, encoding="utf-8")

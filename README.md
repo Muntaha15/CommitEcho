@@ -81,7 +81,9 @@ commitecho diff main feature/my-branch
 commitecho diff main feature/my-branch --path src/api_client.py
 ```
 
-### Export a record
+### Export draft decisions
+
+`export` writes a readable JSON snapshot of a change's draft decisions, predecessor links, and referenced evidence. It is useful for review or handoff. It is not a restorable database backup and does not include sessions, operations, or prepared commit records. The snapshot may contain private evidence; review it before sharing.
 
 ```bash
 commitecho export <change_id>
