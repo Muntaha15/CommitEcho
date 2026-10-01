@@ -229,6 +229,110 @@ def test_setup_command_launches_mcp_server(tmp_path: Path, client_id: str) -> No
     assert not status.is_error
 
 
+def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path) -> None:
+    """Capture a tested code change, commit it, and recall it through a new server."""
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    from uuid import uuid4
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    git("init", "--initial-branch=main")
+    git("config", "user.name", "CommitEcho Test")
+    git("config", "user.email", "test@commitecho.test")
+    (tmp_path / "README.md").write_text("# MCP lifecycle test\n", encoding="utf-8")
+    git("add", "README.md")
+    git("commit", "-m", "initial commit")
+    base_oid = git("rev-parse", "HEAD")
+
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    subprocess.run(
+        [sys.executable, "-m", "commitecho", "setup", "--client", "codex",
+         "--repo", str(tmp_path)],
+        cwd=tmp_path, env=env, check=True, capture_output=True,
+    )
+    profile = ALL_PROFILES["codex"]
+    entry = _read_config(tmp_path / profile.mcp_config_path, profile)[
+        profile.mcp_servers_key
+    ]["commitecho"]
+    params = StdioServerParameters(command=entry["command"], args=entry["args"], env=env)
+
+    async def call(session, name, **args):
+        result = await asyncio.wait_for(session.call_tool(name, args), timeout=10)
+        assert not result.is_error, result.content
+        return json.loads(result.content[0].text)
+
+    async def lifecycle():
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await asyncio.wait_for(session.initialize(), timeout=10)
+                change = await call(
+                    session, "begin_change", title="Preserve order when removing duplicates",
+                    client="codex", operation_id=str(uuid4()),
+                )
+                change_id = change["change_id"]
+                recorded = await call(
+                    session, "record_decisions", change_id=change_id,
+                    expected_revision=change["revision_counter"], operation_id=str(uuid4()),
+                    decisions=[{
+                        "problem": "Remove duplicates while preserving input order",
+                        "choice": "Use dict.fromkeys", "rationale": "The standard library preserves order",
+                        "disposition": "selected", "code_scope": {"paths": ["dedupe.py"]},
+                    }],
+                )
+                (tmp_path / "dedupe.py").write_text(
+                    "def dedupe(values):\n    return list(dict.fromkeys(values))\n\n"
+                    "assert dedupe([3, 1, 3, 2, 1]) == [3, 1, 2]\n"
+                    "assert dedupe([]) == []\n", encoding="utf-8",
+                )
+                subprocess.run(
+                    [sys.executable, "dedupe.py"], cwd=tmp_path, check=True, capture_output=True,
+                )
+                git("add", "dedupe.py")
+                prepared = await call(
+                    session, "prepare_commit", change_id=change_id,
+                    expected_revision=recorded["revision_counter"],
+                    selected_revision_ids=recorded["revision_ids"],
+                    summary="Remove duplicates while preserving order", operation_id=str(uuid4()),
+                )
+                git("add", prepared["record_path"])
+                git("commit", "-m", f"Add ordered deduplication\n\n{prepared['trailer']}")
+                commit_oid = git("rev-parse", "HEAD")
+                verified = await call(session, "verify_commit", commit_oid=commit_oid)
+                assert verified["outcome"] == "exact", verified
+                assert verified["record_id"] == prepared["record_id"]
+
+        indexed = subprocess.run(
+            [sys.executable, "-m", "commitecho", "index", "--repo", str(tmp_path)],
+            cwd=tmp_path, env=env, check=True, capture_output=True, text=True,
+        )
+        assert "Indexed 1 new records." in indexed.stdout
+
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await asyncio.wait_for(session.initialize(), timeout=10)
+                history = await call(session, "search_history", path="dedupe.py")
+                assert history["coverage"] == "full", history
+                assert [r["revision_id"] for r in history["results"]] == recorded["revision_ids"]
+                assert history["results"][0]["choice"] == "Use dict.fromkeys"
+                evidence = await call(session, "get_evidence", record_id=prepared["record_id"])
+                assert evidence["found"] is True
+                assert evidence["commit_oid"] == commit_oid
+                comparison = await call(
+                    session, "compare_history", from_ref=base_oid, to_ref=commit_oid,
+                    path="dedupe.py",
+                )
+                assert [r["revision_id"] for r in comparison["decisions"]] == recorded["revision_ids"]
+                status = await call(session, "get_status", change_id=change_id)
+                assert status["open_changes"] == []
+
+    asyncio.run(lifecycle())
+
+
 def test_malformed_codex_config_is_unchanged(tmp_path: Path) -> None:
     profile = ALL_PROFILES["codex"]
     config_file = tmp_path / profile.mcp_config_path

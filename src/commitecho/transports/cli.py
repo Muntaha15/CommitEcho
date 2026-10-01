@@ -129,9 +129,10 @@ def doctor(repo: str | None) -> None:
     # MCP package
     try:
         import mcp
+        from commitecho.transports.mcp_server import create_server  # noqa: F401
         click.echo(f"[ok] mcp package available ({getattr(mcp, '__version__', 'unknown')})")
-    except ImportError:
-        click.echo("[fail] mcp package not installed", err=True)
+    except ImportError as exc:
+        click.echo(f"[fail] mcp package incompatible or not installed: {exc}", err=True)
         ok = False
 
     if git:
@@ -587,7 +588,7 @@ def export(change_id: str, repo: str | None, output: str | None) -> None:
     git, drafts, index = _get_git_and_dbs(repo)
 
     rows = drafts.execute(
-        "SELECT * FROM decision_revisions WHERE change_id = ? ORDER BY captured_at, revision_id", (change_id,)
+        "SELECT * FROM decision_revisions WHERE change_id = ? ORDER BY captured_at, rowid", (change_id,)
     ).fetchall()
     if not rows:
         click.echo(f"No decisions found for change '{change_id}'.", err=True)

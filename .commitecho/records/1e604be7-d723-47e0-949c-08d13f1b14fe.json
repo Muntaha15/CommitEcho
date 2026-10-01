@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "record_id": "1e604be7-d723-47e0-949c-08d13f1b14fe",
+  "change_id": "6f869d4f-90b3-4b8d-adf2-83d7d00c94e5",
+  "summary": "Check MCP compatibility, preserve draft export order, and cover the MCP v2 stdio lifecycle.",
+  "prepared_for": {
+    "parent_oid": "baf4e8c5852d53c14aa12aa8a669c5da1e74ef7c",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "2ff8d4388ebc3d4ea5f06b7cf85ee6015fd10b1134678c25aee13467678c9ccb"
+  },
+  "decisions": [
+    {
+      "decision_id": "8800432f-67fd-42d9-ad64-b4bb0c3a3e24",
+      "revision_id": "c9cfbc75-5d5d-43d1-9e49-6e9085544a4a",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Existing stdio smoke tests cover startup and status, while the code-change lifecycle is tested through services directly.",
+      "choice": "Add one regression test exercising all eight tools over stdio with a runnable code change, commit verification, indexing, and recall after server restart.",
+      "rationale": "Validate the MCP SDK v2 migration through the actual transport and retain a runnable check for future changes.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "tests/integration/test_setup.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "3e170ce6-7d2d-4ce5-80fc-0d557e7414b2"
+      ],
+      "captured_at": "2026-10-01T13:47:00.696012Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "3e170ce6-7d2d-4ce5-80fc-0d557e7414b2",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Full suite on Python 3.12.14 and MCP SDK 2.2.0: 120 passed in 189.47 seconds, including live stdio handshakes and the new lifecycle regression test.",
+      "locator": null,
+      "client": null,
+      "observed_at": "2026-10-01T13:47:00.696012Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-01T13:47:01.011727Z"
+}
