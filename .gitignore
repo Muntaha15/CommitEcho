@@ -12,4 +12,8 @@ docs/
 
 # Agent client configs generated during local setup/testing
 .agents/
-.commitecho/
+.codex/
+
+# Local CommitEcho files; published decision records belong in Git
+.commitecho/*
+!.commitecho/records/

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "record_id": "275f9a24-1c41-4d05-871e-5c886a10115a",
+  "change_id": "38cdc3d1-c9ca-44b5-a9d6-6ce70f57aa7c",
+  "summary": "Prepare v0.1.0 release documentation and portable record tracking.",
+  "prepared_for": {
+    "parent_oid": "bf162c52e3adacf3f654e49e483eee967f3197f5",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "64236cf02810eea3497aa9c73b3d59a50946f7ec5055f9379a954d5035265ff1"
+  },
+  "decisions": [
+    {
+      "decision_id": "fa4b3fc8-57b3-4ce5-98f6-b50c201842dc",
+      "revision_id": "956b78be-4085-4142-a385-6b631218e402",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "The initial release needs concise documentation and portable decision records.",
+      "choice": "Publish the release notes and keep committed records trackable while ignoring private databases and generated client configuration.",
+      "rationale": "Document the release scope and preserve portable records without publishing machine-specific files.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "README.md",
+          "RELEASE_NOTES.md",
+          ".gitignore"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-01T15:37:06.223605Z"
+    }
+  ],
+  "evidence": [],
+  "created_at": "2026-10-01T15:37:19.970306Z"
+}

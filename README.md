@@ -4,7 +4,7 @@ Preserve the decisions behind code changes and recall them through your coding a
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.1.0 implementation in progress.** The local MCP server, CLI, storage, Git adapter, fixtures, and automated tests exist. Codex and Antigravity have been smoke-tested with the earlier MCP SDK; the complete three-client workflow and release gates are still pending.
+**Status: v0.1.0 initial release; core implementation complete.** The full automated suite passes on MCP SDK 2.2.0, including real stdio lifecycle and restart/recall tests. Live session checks are complete in Codex and Antigravity; Copilot in VS Code live acceptance remains pending. See [release notes](RELEASE_NOTES.md) for validation scope and limitations.
 
 ## Install
 
@@ -215,6 +215,28 @@ Portable records are limited to 64 KiB, with 4 KiB of inline content per evidenc
 
 ---
 
+## CommitEcho in this repository
+
+This repository uses CommitEcho to preserve its own development decisions. For example, [commit bf162c5](https://github.com/Muntaha15/CommitEcho/commit/bf162c52e3adacf3f654e49e483eee967f3197f5) includes a [decision record](.commitecho/records/1e604be7-d723-47e0-949c-08d13f1b14fe.json) explaining why we added a complete MCP stdio lifecycle test: existing transport tests checked startup and status, while lifecycle tests called services directly.
+
+After cloning this repository and installing CommitEcho, inspect the recorded decision and evidence:
+
+```bash
+commitecho index
+commitecho show 1e604be7-d723-47e0-949c-08d13f1b14fe
+```
+
+With CommitEcho connected to your coding agent, recall the decision through MCP:
+
+```text
+search_history(path="tests/integration/test_setup.py")
+get_evidence(record_id="1e604be7-d723-47e0-949c-08d13f1b14fe")
+```
+
+The record includes agent-reported evidence of 120 passing tests on MCP SDK 2.2.0. It preserves the reported result; it does not independently certify it. Review records for private context before committing them. Published `.commitecho/records/` files stay trackable; local `.commitecho/config.json` and generated client configuration stay ignored.
+
+---
+
 ## Evaluation
 
 ### Build fixture repos
@@ -252,9 +274,9 @@ Pytest builds isolated fixture repositories and runs both deterministic evaluati
 
 ---
 
-## Release gates
+## Validation targets
 
-These are target release gates, not a claim that the current build has passed them:
+The initial v0.1.0 release includes automated fixture validation and limited live-client evidence. These targets describe full client qualification; the initial release does not claim all three interactive workflows have passed:
 
 1. **Zero false `exact` results in fixtures** — `commitecho verify` on the `stale_preparation` fixture returns `declared_changed`, not `exact`.
 2. **All records recover in a fresh full clone** — `commitecho index` on a clone of any fixture repo populates the search index and `search_history` returns the expected decisions.
