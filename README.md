@@ -142,8 +142,8 @@ After running `commitecho setup --client codex` the following files are written 
 | File | Purpose |
 |---|---|
 | `.codex/config.toml` | Registers the `commitecho` MCP server entry for trusted Codex projects |
-| `.codex/skills/commitecho.md` | Shared capture/recall skill |
-| `.codex/AGENTS.md` | Activation instruction block |
+| `.agents/skills/commitecho/SKILL.md` | Shared capture/recall skill |
+| `AGENTS.md` | Activation instruction block |
 
 Codex loads project-local configuration only after the project is trusted. Setup does not change
 the user's global trust settings.
@@ -171,7 +171,7 @@ commitecho setup --client copilot_vscode
 | File | Purpose |
 |---|---|
 | `.vscode/mcp.json` | Registers the `commitecho` MCP server entry |
-| `.agents/skills/commitecho.md` | Shared capture/recall skill |
+| `.agents/skills/commitecho/SKILL.md` | Shared capture/recall skill |
 | `.github/copilot-instructions.md` | Activation instruction block (appended) |
 
 ---

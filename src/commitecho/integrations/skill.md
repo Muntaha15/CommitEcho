@@ -1,7 +1,7 @@
 ---
 name: commitecho
-version: 2
-description: Capture decisions made during coding tasks and recall them from Git history.
+version: 3
+description: Capture decisions made during coding tasks, recall rationale from Git history, and prepare verified commit records.
 ---
 
 # CommitEcho capture and recall workflow
@@ -9,17 +9,19 @@ description: Capture decisions made during coding tasks and recall them from Git
 ## When to activate
 - You begin or resume a task involving meaningful code or design work.
 - You need to explain why committed code exists or how decisions evolved.
+- If CommitEcho MCP tools are unavailable in your environment, report this to the user rather than inventing successful capture.
 
 ## Core concepts and parameters
 - **Mutating operations** (`begin_change`, `record_decisions`, `prepare_commit`) require a caller-generated `operation_id`. Use a new UUID for each distinct operation. Reuse the identical `operation_id` only when retrying an identical payload after a transport failure.
-- **Client identification**: Pass `client="antigravity"` (or `"codex"`, `"copilot_vscode"`). Record actual surface and version separately in `client_version` and `native_session_id`.
+- **Client identification**: Pass your active client ID in `client` (`"codex"`, `"antigravity"`, `"copilot_vscode"`, or `"claude_code"`). Record actual surface and version separately in `client_version` and `native_session_id`.
 - **Revision tracking**: `expected_revision` must strictly match the server's current `revision_counter` (initially returned by `begin_change` as 0, updated by each successful `record_decisions`).
 - **Provenance and evidence**: Any agent-authored summary must specify `origin="agent_reported"`. Never invent unstated alternatives or claim developer confirmation (`developer_confirmed`, `developer_attestation`, and `independent_artifact` origins are rejected at the MCP boundary).
+- **Authorization**: Installing or loading this skill does not imply permission to make Git commits; follow normal project authorization.
 
 ## Capture workflow
 
 1. **Open or resume change**:
-   - Call `begin_change` with `title`, `client="antigravity"`, and a new UUID `operation_id`.
+   - Call `begin_change` with `title`, `client` set to your active agent identifier (`"codex"`, `"antigravity"`, `"copilot_vscode"`, or `"claude_code"`), and a new UUID `operation_id`.
    - Save the returned `change_id`, `session_id`, and `revision_counter`.
 
 2. **Record decisions and alternatives**:

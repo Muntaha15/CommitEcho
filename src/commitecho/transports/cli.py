@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -12,14 +13,32 @@ from commitecho.git.adapter import GitAdapter, GitError, discover_repository
 from commitecho.storage.db import open_drafts_db, open_index_db
 
 
-def _get_git_and_dbs(repo: str | None):
-    """Resolve the Git repository and open database connections."""
+def _resolve_repo(repo: str | None) -> GitAdapter:
+    """Resolve the Git repository according to precedence contract:
+    1. Explicit --repo wins, including explicit --repo .
+    2. A supplied COMMITECHO_REPO wins when the argument is omitted.
+    3. Documented CLAUDE_PROJECT_DIR when the above are absent.
+    4. Otherwise use the process working directory and Git discovery.
+    """
+    if repo is not None:
+        target = Path(repo)
+    elif os.environ.get("COMMITECHO_REPO"):
+        target = Path(os.environ["COMMITECHO_REPO"])
+    elif os.environ.get("CLAUDE_PROJECT_DIR"):
+        target = Path(os.environ["CLAUDE_PROJECT_DIR"])
+    else:
+        target = Path.cwd()
+
     try:
-        git = GitAdapter.from_path(repo or Path.cwd())
+        return GitAdapter.from_path(target)
     except GitError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
+
+def _get_git_and_dbs(repo: str | None):
+    """Resolve the Git repository and open database connections."""
+    git = _resolve_repo(repo)
     drafts = open_drafts_db(git.repo_info.common_dir)
     index = open_index_db(git.repo_info.common_dir)
     return git, drafts, index
@@ -37,14 +56,15 @@ def main() -> None:
 
 
 @main.command()
-@click.option("--repo", default=".", show_default=True, help="Path to the Git repository to serve.")
-def serve(repo: str) -> None:
+@click.option("--repo", default=None, help="Path to the Git repository to serve.")
+def serve(repo: str | None) -> None:
     """Start the CommitEcho MCP server on stdio for REPO."""
     import asyncio
 
     from commitecho.transports.mcp_server import run_server
 
-    asyncio.run(run_server(Path(repo).resolve()))
+    git = _resolve_repo(repo)
+    asyncio.run(run_server(Path(git.repo_info.worktree_dir)))
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +235,24 @@ def doctor(repo: str | None) -> None:
             except Exception as exc:
                 click.echo(f"[fail] {profile.display_name}: could not read {profile.instruction_path}: {exc}", err=True)
                 ok = False
+
+        # Check for legacy skill paths and AGENTS.override.md
+        legacy_skills = [
+            worktree / ".codex/skills/commitecho.md",
+            worktree / ".agents/skills/commitecho.md",
+        ]
+        for leg in legacy_skills:
+            if leg.exists():
+                click.echo(
+                    f"[warn] {leg.relative_to(worktree).as_posix()}: obsolete legacy skill file present "
+                    "(run 'commitecho setup' to migrate)"
+                )
+                has_warnings = True
+
+        if (worktree / "AGENTS.override.md").exists():
+            click.echo(
+                "[info] AGENTS.override.md is present: this takes precedence over AGENTS.md in Codex sessions"
+            )
 
         # Client config block detection
         click.echo("\n--- Client configuration ---")
@@ -637,39 +675,61 @@ def export(change_id: str, repo: str | None, output: str | None) -> None:
 @click.option("--repo", default=None, help="Path to the Git repository / project root.")
 @click.option("--server-cmd", default=None,
               help="Command used to launch the server (default: auto-detect 'commitecho serve').")
+@click.option("--portable", is_flag=True,
+              help="Configure portable server command ('commitecho serve') requiring PATH installation.")
 @click.option("--dry-run", is_flag=True, help="Show what would change without writing files.")
-def setup(client_ids: tuple[str, ...], repo: str | None, server_cmd: str | None, dry_run: bool) -> None:
+def setup(
+    client_ids: tuple[str, ...],
+    repo: str | None,
+    server_cmd: str | None,
+    portable: bool,
+    dry_run: bool,
+) -> None:
     """Install CommitEcho configuration for one or more coding agent clients.
 
-    Merges into existing config files.  Use --dry-run to preview changes.
+    Merges into existing config files. Use --dry-run to preview changes.
     """
     from commitecho.integrations.profiles import ALL_PROFILES, SetupGenerator
 
-    git, _, _ = _get_git_and_dbs(repo)
-    worktree = git.repo_info.worktree_dir
+    if server_cmd and portable:
+        raise click.UsageError("Cannot specify both --server-cmd and --portable.")
 
+    # Preflight client IDs
     if not client_ids:
-        client_ids = tuple(ALL_PROFILES.keys())
+        target_client_ids = tuple(ALL_PROFILES.keys())
+    else:
+        for cid in client_ids:
+            if cid not in ALL_PROFILES:
+                raise click.ClickException(
+                    f"Unknown client '{cid}'. Supported: {', '.join(ALL_PROFILES)}"
+                )
+        target_client_ids = client_ids
+
+    # Resolve git worktree WITHOUT opening databases (dry-run safe)
+    git = _resolve_repo(repo)
+    worktree = git.repo_info.worktree_dir
 
     cmd: list[str]
     if server_cmd:
-        # shlex-split so quoted paths with spaces survive (cross-platform via
-        # posix=False on Windows keeps backslashes intact).
         import shlex
         cmd = shlex.split(server_cmd, posix=(sys.platform != "win32"))
+        if not cmd:
+            raise click.ClickException("Server command cannot be empty.")
+    elif portable:
+        cmd = ["commitecho", "serve"]
     else:
-        # sys.executable may contain spaces on Windows (e.g. "C:\Program Files\…").
-        # Store it as a single array element; all three clients consume the array
-        # directly in JSON so no shell quoting is needed.
         cmd = [sys.executable, "-m", "commitecho", "serve"]
 
-    generator = SetupGenerator(worktree, cmd)
+    generator = SetupGenerator(worktree, cmd, portable=portable)
 
-    for cid in client_ids:
-        profile = ALL_PROFILES.get(cid)
-        if profile is None:
-            click.echo(f"[warn] Unknown client '{cid}'. Supported: {', '.join(ALL_PROFILES)}", err=True)
-            continue
+    # Preflight configuration files before any writes
+    selected_profiles = [ALL_PROFILES[cid] for cid in target_client_ids]
+    try:
+        generator.preflight(selected_profiles)
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    for profile in selected_profiles:
         click.echo(f"\n[{profile.display_name}]")
         changes = generator.generate(profile, dry_run=dry_run)
         for change in changes:

@@ -27,6 +27,36 @@ _version_match = re.search(r"^version:\s*(\d+)", _SKILL_TEMPLATE, re.MULTILINE)
 SKILL_VERSION: int = int(_version_match.group(1)) if _version_match else 0
 
 
+def is_known_generated_skill(content: str) -> bool:
+    """Check if content matches a known generated CommitEcho skill asset or test stub."""
+    if content.strip() == _SKILL_TEMPLATE.strip():
+        return True
+
+    fm_match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n(.*))?$", content, re.DOTALL)
+    if not fm_match:
+        return False
+    fm_text = fm_match.group(1)
+    body_text = (fm_match.group(2) or "").strip()
+
+    if not re.search(r"^name:\s*commitecho\b", fm_text, re.MULTILINE):
+        return False
+
+    v_match = re.search(r"^version:\s*(\d+)", fm_text, re.MULTILINE)
+    if not v_match:
+        return False
+    version = int(v_match.group(1))
+
+    # Version 0 test stub
+    if version == 0:
+        return True
+
+    # Known versions 1, 2, 3
+    if version in (1, 2, 3) and "# CommitEcho capture and recall workflow" in body_text:
+        return True
+
+    return False
+
+
 @dataclass
 class ClientProfile:
     """Declarative description of how a client hosts the CommitEcho MCP server."""
@@ -46,16 +76,21 @@ class ClientProfile:
     # Known limitations for this client
     known_limitations: list[str] = field(default_factory=list)
 
-    def mcp_config_entry(self, server_command: list[str], repo_path: str) -> dict[str, Any]:
+    def mcp_config_entry(
+        self, server_command: list[str], repo_path: str | None = None
+    ) -> dict[str, Any]:
         """Return the MCP server config block for this client.
 
         Each element of *server_command* is stored as-is; JSON serialisation
         preserves spaces so clients that consume the array directly (Codex,
         Antigravity, VS Code all use the array form) never need shell quoting.
         """
+        args = list(server_command[1:])
+        if repo_path is not None:
+            args.extend(["--repo", repo_path])
         return {
             "command": server_command[0],
-            "args": server_command[1:] + ["--repo", repo_path],
+            "args": args,
         }
 
 
@@ -69,8 +104,8 @@ CODEX = ClientProfile(
     mcp_config_path=".codex/config.toml",
     mcp_servers_key="mcp_servers",
     config_format="toml",
-    skill_path=".codex/skills/commitecho.md",
-    instruction_path=".codex/AGENTS.md",
+    skill_path=".agents/skills/commitecho/SKILL.md",
+    instruction_path="AGENTS.md",
     known_limitations=[
         "Lifecycle hooks are optional; baseline uses explicit tool calls only.",
         "Exact supported Codex version must be validated during M0 spike.",
@@ -96,7 +131,7 @@ COPILOT_VSCODE = ClientProfile(
     display_name="GitHub Copilot in VS Code",
     mcp_config_path=".vscode/mcp.json",
     mcp_servers_key="servers",
-    skill_path=".agents/skills/commitecho.md",
+    skill_path=".agents/skills/commitecho/SKILL.md",
     instruction_path=".github/copilot-instructions.md",
     known_limitations=[
         "Hook behavior depends on the active session harness and VS Code version.",
@@ -121,9 +156,41 @@ class SetupGenerator:
     or user instructions.  Provides dry-run diff before writing.
     """
 
-    def __init__(self, worktree: str | Path, server_command: list[str]) -> None:
+    def __init__(
+        self,
+        worktree: str | Path,
+        server_command: list[str],
+        *,
+        portable: bool = False,
+    ) -> None:
         self._root = Path(worktree)
         self._cmd = server_command
+        self._portable = portable
+        self._migrated_legacy: set[Path] = set()
+
+    def preflight(self, profiles: list[ClientProfile]) -> None:
+        """Preflight selected profiles, command input, and existing configuration files.
+
+        Raises ValueError on validation failure before any file write.
+        """
+        if not self._cmd or not any(part.strip() for part in self._cmd):
+            raise ValueError("Server command cannot be empty.")
+
+        for profile in profiles:
+            config_file = self._root / profile.mcp_config_path
+            if config_file.exists():
+                raw = config_file.read_text(encoding="utf-8")
+                config = (
+                    tomlkit.parse(raw)
+                    if profile.config_format == "toml"
+                    else json.loads(raw)
+                )
+
+                servers_key = profile.mcp_servers_key
+                if servers_key in config and not isinstance(config[servers_key], dict):
+                    raise ValueError(
+                        f"Invalid configuration in '{profile.mcp_config_path}': '{servers_key}' must be a mapping/table."
+                    )
 
     def generate(
         self,
@@ -135,15 +202,16 @@ class SetupGenerator:
         Returns a list of human-readable change descriptions.
         If *dry_run* is True, no files are written.
         """
+        self.preflight([profile])
         changes: list[str] = []
-        repo_path = str(self._root.resolve())
+        repo_path = None if self._portable else str(self._root.resolve())
 
         # 1. MCP config
         changes.extend(
             self._update_mcp_config(profile, repo_path, dry_run=dry_run)
         )
 
-        # 2. Skill file
+        # 2. Skill file & legacy cleanup
         changes.extend(self._install_skill(profile, dry_run=dry_run))
 
         # 3. Activation instruction block
@@ -153,7 +221,7 @@ class SetupGenerator:
         return changes
 
     def _update_mcp_config(
-        self, profile: ClientProfile, repo_path: str, *, dry_run: bool
+        self, profile: ClientProfile, repo_path: str | None, *, dry_run: bool
     ) -> list[str]:
         config_file = self._root / profile.mcp_config_path
         entry = profile.mcp_config_entry(self._cmd, repo_path)
@@ -167,13 +235,22 @@ class SetupGenerator:
 
         servers = config.setdefault(servers_key, {})
         if "commitecho" in servers:
-            if servers["commitecho"] == entry:
+            existing = servers["commitecho"]
+            if not isinstance(existing, dict):
+                raise ValueError(
+                    f"Existing 'commitecho' entry in '{profile.mcp_config_path}' is not a mapping."
+                )
+            if existing.get("command") == entry["command"] and existing.get("args") == entry["args"]:
                 return [f"[skip] {profile.mcp_config_path}: commitecho entry already up to date."]
             action = f"[update] {profile.mcp_config_path}: update commitecho server entry."
+            # Preserve user overrides in unowned keys
+            merged_entry = dict(existing)
+            merged_entry["command"] = entry["command"]
+            merged_entry["args"] = entry["args"]
+            servers["commitecho"] = merged_entry
         else:
             action = f"[add] {profile.mcp_config_path}: add commitecho server entry."
-
-        servers["commitecho"] = entry
+            servers["commitecho"] = entry
 
         if not dry_run:
             config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -187,21 +264,58 @@ class SetupGenerator:
         return [action]
 
     def _install_skill(self, profile: ClientProfile, *, dry_run: bool) -> list[str]:
+        changes: list[str] = []
         skill_file = self._root / profile.skill_path
         skill_content = _SKILL_TEMPLATE  # read from skill.md at import time
 
         if skill_file.exists():
-            if skill_file.read_text(encoding="utf-8") == skill_content:
-                return [f"[skip] {profile.skill_path}: skill already installed."]
-            action = f"[update] {profile.skill_path}: update shared capture/recall skill."
+            existing = skill_file.read_text(encoding="utf-8")
+            if existing == skill_content:
+                changes.append(f"[skip] {profile.skill_path}: skill already installed.")
+            elif is_known_generated_skill(existing):
+                changes.append(f"[update] {profile.skill_path}: update shared capture/recall skill.")
+                if not dry_run:
+                    skill_file.parent.mkdir(parents=True, exist_ok=True)
+                    skill_file.write_text(skill_content, encoding="utf-8")
+            else:
+                changes.append(
+                    f"[conflict] {profile.skill_path}: custom skill content detected; preserving without overwrite."
+                )
         else:
-            action = f"[add] {profile.skill_path}: install shared capture/recall skill."
+            changes.append(f"[add] {profile.skill_path}: install shared capture/recall skill.")
+            if not dry_run:
+                skill_file.parent.mkdir(parents=True, exist_ok=True)
+                skill_file.write_text(skill_content, encoding="utf-8")
 
-        if not dry_run:
-            skill_file.parent.mkdir(parents=True, exist_ok=True)
-            skill_file.write_text(skill_content, encoding="utf-8")
+        # Legacy skill migration / cleanup
+        legacy_paths = [
+            Path(".codex/skills/commitecho.md"),
+            Path(".agents/skills/commitecho.md"),
+        ]
+        for rel_legacy in legacy_paths:
+            if rel_legacy in self._migrated_legacy:
+                continue
+            legacy_file = self._root / rel_legacy
+            if legacy_file.exists() and legacy_file.resolve() != skill_file.resolve():
+                self._migrated_legacy.add(rel_legacy)
+                legacy_content = legacy_file.read_text(encoding="utf-8")
+                if is_known_generated_skill(legacy_content):
+                    changes.append(f"[migrate] {rel_legacy.as_posix()}: remove obsolete legacy skill file.")
+                    if not dry_run:
+                        try:
+                            legacy_file.unlink()
+                            try:
+                                legacy_file.parent.rmdir()
+                            except OSError:
+                                pass
+                        except OSError as exc:
+                            changes.append(f"[warn] {rel_legacy.as_posix()}: failed to remove legacy file: {exc}")
+                else:
+                    changes.append(
+                        f"[warn] {rel_legacy.as_posix()}: custom legacy skill detected; preserved (please migrate manually to {profile.skill_path})."
+                    )
 
-        return [action]
+        return changes
 
     def _update_instructions(self, profile: ClientProfile, *, dry_run: bool) -> list[str]:
         if not profile.instruction_path:
@@ -211,21 +325,27 @@ class SetupGenerator:
         instr_file = self._root / profile.instruction_path
         block = _ACTIVATION_BLOCK
 
+        changes: list[str] = []
+        if (self._root / "AGENTS.override.md").exists() and profile.instruction_path == "AGENTS.md":
+            changes.append("[info] AGENTS.override.md detected: will take precedence over AGENTS.md in Codex sessions.")
+
         if instr_file.exists():
             content = instr_file.read_text(encoding="utf-8")
             if _ACTIVATION_MARKER in content:
-                return [f"[skip] {profile.instruction_path}: activation block already present."]
+                changes.append(f"[skip] {profile.instruction_path}: activation block already present.")
+                return changes
             new_content = content.rstrip() + "\n\n" + block
             action = f"[add] {profile.instruction_path}: append CommitEcho activation block."
         else:
             new_content = block
             action = f"[create] {profile.instruction_path}: create with CommitEcho activation block."
 
+        changes.append(action)
         if not dry_run:
             instr_file.parent.mkdir(parents=True, exist_ok=True)
             instr_file.write_text(new_content, encoding="utf-8")
 
-        return [action]
+        return changes
 
     def _update_rule(self, profile: ClientProfile, *, dry_run: bool) -> list[str]:
         assert profile.instruction_path is not None
