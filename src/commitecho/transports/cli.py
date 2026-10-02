@@ -345,7 +345,9 @@ def status(repo: str | None, change_id: str | None, as_json: bool) -> None:
 
 @main.command("index")
 @click.option("--repo", default=None, help="Path to the Git repository.")
-def rebuild_index(repo: str | None) -> None:
+@click.option("--timeout", default=None, type=float, help="Timeout in seconds for bounded indexing (e.g. for session-start hooks).")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress informational messages (errors/warnings only).")
+def rebuild_index(repo: str | None, timeout: float | None, quiet: bool) -> None:
     """Rebuild the history index from committed Git objects.
 
     Scans .commitecho/records/ JSON files reachable from HEAD and populates
@@ -356,7 +358,8 @@ def rebuild_index(repo: str | None) -> None:
 
     head_oid = git.head_oid()
     if head_oid is None:
-        click.echo("Repository has no commits yet.")
+        if not quiet:
+            click.echo("Repository has no commits yet.")
         return
 
     # Enumerate all commits reachable from HEAD
@@ -365,13 +368,22 @@ def rebuild_index(repo: str | None) -> None:
     except GitError as exc:
         raise click.ClickException(f"Cannot traverse Git history: {exc}") from exc
     if coverage == "partial":
-        click.echo("  [warn] Git history is incomplete; index coverage will be partial.")
-    click.echo(f"Scanning {len(oids)} commits...")
+        click.echo("  [warn] Git history is incomplete; index coverage will be partial.", err=True)
+    if not quiet:
+        click.echo(f"Scanning {len(oids)} commits...")
 
+    import time
     from datetime import datetime, timezone
 
+    start_time = time.monotonic()
     indexed = 0
+    timeout_hit = False
+
     for oid in oids:
+        if timeout is not None and (time.monotonic() - start_time) >= timeout:
+            timeout_hit = True
+            break
+
         already = index.execute(
             "SELECT 1 FROM indexed_commits WHERE commit_oid = ?", (oid,)
         ).fetchone()
@@ -422,9 +434,15 @@ def rebuild_index(repo: str | None) -> None:
                         "(commit_oid, record_path, error, observed_at) VALUES (?, ?, ?, ?)",
                         (oid, failed_path, error, datetime.now(timezone.utc).isoformat()),
                     )
-                    click.echo(f"  [warn] {oid[:8]}: {failed_path}: {error}")
+                    click.echo(f"  [warn] {oid[:8]}: {failed_path}: {error}", err=True)
 
-    click.echo(f"Indexed {indexed} new records.")
+    if timeout_hit:
+        click.echo(
+            f"[warn] CommitEcho: Indexing stopped after reaching timeout of {timeout:.1f}s ({indexed} new records indexed).",
+            err=True,
+        )
+    elif not quiet:
+        click.echo(f"Indexed {indexed} new records.")
 
 
 def _index_record(index, commit_oid: str, record_id: str, record_path: str, data: dict, raw: str) -> None:
@@ -969,22 +987,7 @@ def _display_rel_path(path: Path, worktree: Path | str) -> str:
         return path.as_posix()
 
 
-@main.group()
-def hook() -> None:
-    """Manage Git and agent lifecycle hooks."""
-
-
-@hook.command("install")
-@click.option("--git", "use_git", is_flag=True, default=True, help="Install Git commit-msg hook.")
-@click.option("--repo", default=None, help="Path to the Git repository.")
-@click.option("--strict", is_flag=True, default=False, help="Reject commits that fail message validation.")
-@click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
-def hook_install(use_git: bool, repo: str | None, strict: bool, dry_run: bool) -> None:
-    """Install the Git commit-msg message validation hook.
-
-    Safely installs or updates the CommitEcho commit-msg hook. Preserves foreign hooks.
-    """
-    git = _resolve_repo(repo)
+def _install_git_hook(git: GitAdapter, strict: bool, dry_run: bool) -> None:
     hook_file, is_local = git.get_hook_path("commit-msg")
     wt = Path(git.repo_info.worktree_dir)
 
@@ -1011,7 +1014,7 @@ def hook_install(use_git: bool, repo: str | None, strict: bool, dry_run: bool) -
             )
             new_content = pattern.sub(block, existing)
             if new_content == existing:
-                click.echo(f"[skip] {display_path}: hook already up to date (strict={strict}).")
+                click.echo(f"[skip] {display_path}: Git hook already up to date (strict={strict}).")
                 return
             action = f"[update] {display_path}: update CommitEcho commit-msg hook (strict={strict})."
         else:
@@ -1033,18 +1036,12 @@ def hook_install(use_git: bool, repo: str | None, strict: bool, dry_run: bool) -
             os.chmod(hook_file, mode | 0o755)
         except OSError:
             pass
-        click.echo("Hook installed successfully.")
+        click.echo("Git hook installed successfully.")
     else:
         click.echo("(dry-run: no files were written)")
 
 
-@hook.command("uninstall")
-@click.option("--git", "use_git", is_flag=True, default=True, help="Uninstall Git commit-msg hook.")
-@click.option("--repo", default=None, help="Path to the Git repository.")
-@click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
-def hook_uninstall(use_git: bool, repo: str | None, dry_run: bool) -> None:
-    """Uninstall the CommitEcho Git commit-msg hook."""
-    git = _resolve_repo(repo)
+def _uninstall_git_hook(git: GitAdapter, dry_run: bool) -> None:
     hook_file, is_local = git.get_hook_path("commit-msg")
     wt = Path(git.repo_info.worktree_dir)
     display_path = _display_rel_path(hook_file, wt)
@@ -1070,7 +1067,7 @@ def hook_uninstall(use_git: bool, repo: str | None, dry_run: bool) -> None:
         click.echo(action)
         if not dry_run:
             hook_file.unlink()
-            click.echo("Hook uninstalled successfully.")
+            click.echo("Git hook uninstalled successfully.")
         else:
             click.echo("(dry-run: no files were changed)")
     else:
@@ -1078,6 +1075,329 @@ def hook_uninstall(use_git: bool, repo: str | None, dry_run: bool) -> None:
         click.echo(action)
         if not dry_run:
             hook_file.write_text(remainder + "\n", encoding="utf-8")
-            click.echo("Hook block removed successfully.")
+            click.echo("Git hook block removed successfully.")
         else:
             click.echo("(dry-run: no files were changed)")
+
+
+def _install_claude_code_hook(wt: Path, timeout: float, portable: bool, dry_run: bool) -> None:
+    settings_file = wt / ".claude" / "settings.json"
+    display_path = _display_rel_path(settings_file, wt)
+
+    settings_data: dict[str, Any] = {}
+    if settings_file.exists():
+        try:
+            settings_data = json.loads(settings_file.read_text(encoding="utf-8"))
+            if not isinstance(settings_data, dict):
+                raise ValueError("root is not a JSON object")
+        except Exception as exc:
+            raise click.ClickException(f"Failed to parse existing '{display_path}': {exc}")
+
+    hooks_dict = settings_data.setdefault("hooks", {})
+    if not isinstance(hooks_dict, dict):
+        raise click.ClickException(f"'hooks' in '{display_path}' is not a mapping.")
+
+    session_start_list = hooks_dict.setdefault("SessionStart", [])
+    if not isinstance(session_start_list, list):
+        raise click.ClickException(f"'hooks.SessionStart' in '{display_path}' is not a list.")
+
+    py_path = Path(sys.executable).as_posix()
+    cmd = "commitecho" if portable else py_path
+    args = (
+        ["index", "--timeout", str(timeout), "--quiet"]
+        if portable
+        else ["-m", "commitecho", "index", "--timeout", str(timeout), "--quiet"]
+    )
+    hook_entry = {
+        "type": "command",
+        "command": cmd,
+        "args": args,
+    }
+    matcher_entry = {
+        "matcher": "startup|resume",
+        "hooks": [hook_entry],
+    }
+
+    # Search for an existing CommitEcho hook in SessionStart
+    existing_idx = None
+    for idx, item in enumerate(session_start_list):
+        if not isinstance(item, dict):
+            continue
+        sub_hooks = item.get("hooks", [])
+        for sub in sub_hooks:
+            if isinstance(sub, dict) and "commitecho" in (sub.get("command") or ""):
+                existing_idx = idx
+                break
+            if isinstance(sub, dict) and any("commitecho" in str(a) for a in sub.get("args", [])):
+                existing_idx = idx
+                break
+        if existing_idx is not None:
+            break
+
+    if existing_idx is not None:
+        if session_start_list[existing_idx] == matcher_entry:
+            click.echo(f"[skip] {display_path}: SessionStart hook already up to date.")
+            return
+        action = f"[update] {display_path}: update SessionStart hook for bounded indexing."
+        session_start_list[existing_idx] = matcher_entry
+    else:
+        action = f"[add] {display_path}: add SessionStart hook for bounded indexing."
+        session_start_list.append(matcher_entry)
+
+    click.echo(action)
+    if not dry_run:
+        settings_file.parent.mkdir(parents=True, exist_ok=True)
+        settings_file.write_text(json.dumps(settings_data, indent=2) + "\n", encoding="utf-8")
+        click.echo("Claude Code lifecycle hook installed successfully.")
+    else:
+        click.echo("(dry-run: no files were written)")
+
+
+def _uninstall_claude_code_hook(wt: Path, dry_run: bool) -> None:
+    settings_file = wt / ".claude" / "settings.json"
+    display_path = _display_rel_path(settings_file, wt)
+
+    if not settings_file.exists():
+        click.echo(f"[skip] No settings file found at '{display_path}'.")
+        return
+
+    try:
+        settings_data = json.loads(settings_file.read_text(encoding="utf-8"))
+        if not isinstance(settings_data, dict):
+            raise ValueError("root is not a JSON object")
+    except Exception as exc:
+        raise click.ClickException(f"Failed to parse '{display_path}': {exc}")
+
+    hooks_dict = settings_data.get("hooks")
+    if not isinstance(hooks_dict, dict):
+        click.echo(f"[skip] No 'hooks' configuration in '{display_path}'.")
+        return
+
+    session_start_list = hooks_dict.get("SessionStart")
+    if not isinstance(session_start_list, list):
+        click.echo(f"[skip] No 'SessionStart' hooks in '{display_path}'.")
+        return
+
+    new_session_start = []
+    removed = False
+    for item in session_start_list:
+        is_commitecho = False
+        if isinstance(item, dict):
+            for sub in item.get("hooks", []):
+                if isinstance(sub, dict) and "commitecho" in (sub.get("command") or ""):
+                    is_commitecho = True
+                    break
+                if isinstance(sub, dict) and any("commitecho" in str(a) for a in sub.get("args", [])):
+                    is_commitecho = True
+                    break
+        if is_commitecho:
+            removed = True
+        else:
+            new_session_start.append(item)
+
+    if not removed:
+        click.echo(f"[skip] No CommitEcho SessionStart hook found in '{display_path}'.")
+        return
+
+    if new_session_start:
+        hooks_dict["SessionStart"] = new_session_start
+    else:
+        hooks_dict.pop("SessionStart", None)
+
+    if not hooks_dict:
+        settings_data.pop("hooks", None)
+
+    if not settings_data:
+        action = f"[remove] {display_path}: delete empty settings file."
+        click.echo(action)
+        if not dry_run:
+            settings_file.unlink()
+            click.echo("Claude Code lifecycle hook uninstalled successfully.")
+        else:
+            click.echo("(dry-run: no files were changed)")
+    else:
+        action = f"[update] {display_path}: remove CommitEcho SessionStart hook, preserving other settings."
+        click.echo(action)
+        if not dry_run:
+            settings_file.write_text(json.dumps(settings_data, indent=2) + "\n", encoding="utf-8")
+            click.echo("Claude Code lifecycle hook uninstalled successfully.")
+        else:
+            click.echo("(dry-run: no files were changed)")
+
+
+@main.group()
+def hook() -> None:
+    """Manage Git and agent lifecycle hooks."""
+
+
+@hook.command("install")
+@click.option("--git", "use_git", is_flag=True, default=False, help="Install Git commit-msg hook.")
+@click.option("--client", "client_id", default=None, type=click.Choice(["claude_code"]),
+              help="Install client lifecycle hook (claude_code SessionStart bounded indexing).")
+@click.option("--repo", default=None, help="Path to the Git repository.")
+@click.option("--strict", is_flag=True, default=False, help="Reject commits that fail message validation (Git hook only).")
+@click.option("--timeout", default=5.0, type=float, help="Timeout in seconds for bounded indexing hook (default: 5.0).")
+@click.option("--portable", is_flag=True, help="Use portable command ('commitecho') requiring PATH installation.")
+@click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
+def hook_install(
+    use_git: bool,
+    client_id: str | None,
+    repo: str | None,
+    strict: bool,
+    timeout: float,
+    portable: bool,
+    dry_run: bool,
+) -> None:
+    """Install Git commit-msg hook or client lifecycle hooks.
+
+    Default: installs the Git commit-msg hook if neither --git nor --client is specified.
+    """
+    if not use_git and not client_id:
+        use_git = True
+
+    git = _resolve_repo(repo)
+    wt = Path(git.repo_info.worktree_dir)
+
+    if use_git:
+        _install_git_hook(git, strict=strict, dry_run=dry_run)
+
+    if client_id == "claude_code":
+        _install_claude_code_hook(wt, timeout=timeout, portable=portable, dry_run=dry_run)
+
+
+@hook.command("uninstall")
+@click.option("--git", "use_git", is_flag=True, default=False, help="Uninstall Git commit-msg hook.")
+@click.option("--client", "client_id", default=None, type=click.Choice(["claude_code"]),
+              help="Uninstall client lifecycle hook (claude_code SessionStart bounded indexing).")
+@click.option("--repo", default=None, help="Path to the Git repository.")
+@click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
+def hook_uninstall(
+    use_git: bool,
+    client_id: str | None,
+    repo: str | None,
+    dry_run: bool,
+) -> None:
+    """Uninstall CommitEcho Git or client lifecycle hooks."""
+    if not use_git and not client_id:
+        use_git = True
+
+    git = _resolve_repo(repo)
+    wt = Path(git.repo_info.worktree_dir)
+
+    if use_git:
+        _uninstall_git_hook(git, dry_run=dry_run)
+
+    if client_id == "claude_code":
+        _uninstall_claude_code_hook(wt, dry_run=dry_run)
+
+
+# ---------------------------------------------------------------------------
+# plugin (Claude Code plugin generator)
+# ---------------------------------------------------------------------------
+
+
+@main.command("plugin")
+@click.option("--output-dir", default=None, help="Directory to generate the Claude plugin into (default: commitecho-plugin in repo root).")
+@click.option("--repo", default=None, help="Path to the Git repository / project root.")
+@click.option("--portable", is_flag=True, help="Use portable server command ('commitecho serve') on PATH.")
+@click.option("--dry-run", is_flag=True, help="Show what would be created without writing files.")
+def plugin(
+    output_dir: str | None,
+    repo: str | None,
+    portable: bool,
+    dry_run: bool,
+) -> None:
+    """Generate a distribution-ready Claude Code plugin.
+
+    Creates standard plugin layout:
+      <output_dir>/
+      ├── .claude-plugin/plugin.json
+      ├── .mcp.json
+      └── skills/commitecho/SKILL.md
+    """
+    from commitecho.integrations.profiles import SKILL_TEMPLATE
+
+    git = _resolve_repo(repo)
+    wt = Path(git.repo_info.worktree_dir)
+
+    target_dir = Path(output_dir) if output_dir else wt / "commitecho-plugin"
+    if not target_dir.is_absolute():
+        target_dir = (wt / target_dir).resolve()
+
+    manifest_file = target_dir / ".claude-plugin" / "plugin.json"
+    mcp_file = target_dir / ".mcp.json"
+    skill_file = target_dir / "skills" / "commitecho" / "SKILL.md"
+
+    # Directory safety check: if directory exists and is nonempty, ensure it is a commitecho plugin directory
+    if target_dir.exists() and any(target_dir.iterdir()):
+        if not manifest_file.exists():
+            raise click.ClickException(
+                f"Target directory '{target_dir}' exists and is not a CommitEcho plugin directory. "
+                "Refusing to overwrite unrelated files."
+            )
+
+    try:
+        import importlib.metadata
+        pkg_version = importlib.metadata.version("commitecho")
+    except Exception:
+        pkg_version = "0.1.0"
+
+    manifest_content = json.dumps(
+        {
+            "name": "commitecho",
+            "version": pkg_version,
+            "description": "Preserve the decisions behind code changes and recall them through your coding agent.",
+            "author": {
+                "name": "CommitEcho Contributors",
+            },
+            "homepage": "https://github.com/Muntaha15/CommitEcho",
+            "repository": "https://github.com/Muntaha15/CommitEcho",
+        },
+        indent=2,
+    ) + "\n"
+
+    cmd = (
+        ["commitecho", "serve"]
+        if portable
+        else [Path(sys.executable).as_posix(), "-m", "commitecho", "serve"]
+    )
+    mcp_content = json.dumps(
+        {
+            "mcpServers": {
+                "commitecho": {
+                    "command": cmd[0],
+                    "args": cmd[1:],
+                }
+            }
+        },
+        indent=2,
+    ) + "\n"
+
+    skill_content = SKILL_TEMPLATE
+
+    plan = [
+        (manifest_file, manifest_content),
+        (mcp_file, mcp_content),
+        (skill_file, skill_content),
+    ]
+
+    for fpath, content in plan:
+        disp = _display_rel_path(fpath, wt)
+        if not fpath.exists():
+            click.echo(f"[create] {disp}")
+            if not dry_run:
+                fpath.parent.mkdir(parents=True, exist_ok=True)
+                fpath.write_text(content, encoding="utf-8")
+        else:
+            existing = fpath.read_text(encoding="utf-8")
+            if existing == content:
+                click.echo(f"[skip] {disp}: already up to date.")
+            else:
+                click.echo(f"[update] {disp}")
+                if not dry_run:
+                    fpath.write_text(content, encoding="utf-8")
+
+    if dry_run:
+        click.echo("\n(dry-run: no files were written)")
+    else:
+        click.echo("\nPlugin generated successfully.")

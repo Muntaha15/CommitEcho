@@ -134,6 +134,25 @@ The validation hook checks that:
 - Empty commits and merges without staged decisions are permitted.
 - Foreign hooks (e.g. from husky, pre-commit) are preserved and never overwritten.
 
+
+### Generate Claude Code plugin
+
+Generate a distribution-ready Claude Code plugin containing the MCP server definition, canonical skill, and plugin manifest:
+
+```bash
+# Generate standard plugin in ./commitecho-plugin:
+commitecho plugin
+
+# Generate portable plugin requiring commitecho on PATH:
+commitecho plugin --portable
+
+# Generate to a custom directory:
+commitecho plugin --output-dir path/to/plugin
+
+# Preview plugin generation without writing files:
+commitecho plugin --dry-run
+```
+
 ---
 
 ## MCP server (agent transport)

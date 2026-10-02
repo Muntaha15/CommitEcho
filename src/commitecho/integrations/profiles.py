@@ -21,6 +21,7 @@ import tomlkit
 
 _SKILL_FILE = Path(__file__).parent / "skill.md"
 _SKILL_TEMPLATE: str = _SKILL_FILE.read_text(encoding="utf-8")
+SKILL_TEMPLATE: str = _SKILL_TEMPLATE
 
 # Extract the declared version from the YAML front-matter (``version: N``).
 _version_match = re.search(r"^version:\s*(\d+)", _SKILL_TEMPLATE, re.MULTILINE)

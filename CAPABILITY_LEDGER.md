@@ -30,3 +30,21 @@ This ledger documents verified client surfaces, environments, MCP configurations
   - Code changes during amend or stale preparations are rejected in strict mode.
   - Foreign hooks without CommitEcho markers are left untouched with manual integration instructions.
 - **Verification**: 29/29 tests passing in `tests/integration/test_hooks.py`.
+
+## Phase 3: Bounded Session Indexing & Client Lifecycle Hooks
+
+- **CLI Commands**:
+  - `commitecho index [--timeout SECONDS] [--quiet]`: Supports bounded execution with a configurable timeout to prevent blocking during session startup/resume, and quiet mode for silent background indexing.
+  - `commitecho hook install --client claude_code [--timeout SECONDS] [--portable] [--dry-run]`: Explicit opt-in command that installs or updates a `SessionStart` bounded indexing hook in `.claude/settings.json`.
+  - `commitecho hook uninstall --client claude_code [--dry-run]`: Removes CommitEcho `SessionStart` hook from `.claude/settings.json`, preserving unrelated user settings and hooks.
+- **Verification**: Tests passing in `tests/integration/test_plugin_and_lifecycle.py` (TestBoundedIndex & TestClaudeCodeSessionHook).
+
+## Phase 4: Claude Code Plugin Packaging
+
+- **Plugin Structure**: Standard layout in `commitecho-plugin/`:
+  - `.claude-plugin/plugin.json`: Plugin manifest referencing project metadata.
+  - `.mcp.json`: Server configuration using portable command or active environment.
+  - `skills/commitecho/SKILL.md`: Client-neutral canonical skill v3.
+- **CLI Generator**:
+  - `commitecho plugin [--output-dir PATH] [--portable] [--dry-run]`: Generates a distribution-ready plugin. Refuses to overwrite non-empty unrelated directories, ensures idempotency on repeat runs, and supports dry-run preview.
+- **Verification**: Tests passing in `tests/integration/test_plugin_and_lifecycle.py` (TestPluginGenerator).

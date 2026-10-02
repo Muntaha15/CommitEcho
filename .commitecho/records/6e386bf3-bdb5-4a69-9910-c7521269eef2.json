@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "record_id": "6e386bf3-bdb5-4a69-9910-c7521269eef2",
+  "change_id": "dac10516-4b82-4ca4-99a3-938f1699e737",
+  "summary": "feat(integrations): add bounded indexing hooks, Claude plugin generator, and packaging",
+  "prepared_for": {
+    "parent_oid": "cdddae58ec6b83d9cc45b3677234eda7f0276f7b",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "d6f6de5dc8adc851b82b087bae01b1c75b0601fe7a8fa223290f66eb179a06d9"
+  },
+  "decisions": [
+    {
+      "decision_id": "edd70995-5725-4ad9-839e-5f8d45efdd52",
+      "revision_id": "67bb607f-6396-4174-809f-dee401c167cb",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Background indexing must not block agent startup or model invocation, and native hook installation must be explicit, preserving foreign settings.",
+      "choice": "Add --timeout and --quiet options to commitecho index for bounded execution, and add commitecho hook install/uninstall --client claude_code for SessionStart hook configuration in .claude/settings.json.",
+      "rationale": "A bounded timeout ensures startup/resume indexing terminates quickly without hanging, while scoped merging into .claude/settings.json preserves existing hooks and user preferences.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/transports/cli.py",
+          "src/commitecho/integrations/profiles.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T11:11:09.003490Z"
+    },
+    {
+      "decision_id": "17bc3c96-7ef8-4cd2-b244-9522cd9a610e",
+      "revision_id": "1119e8ab-6b1c-4760-968f-a305fb570691",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Claude Code plugin distribution requires a clean, standard directory layout (.claude-plugin/plugin.json, .mcp.json, skills/commitecho/SKILL.md) that is validated and safely generated without overwriting unrelated directories.",
+      "choice": "Create commitecho-plugin template layout and implement commitecho plugin CLI command with --output-dir, directory safety checks, portable/local server command options, and dry-run preview.",
+      "rationale": "Placing skills and config outside .claude-plugin follows the Claude plugin specification, and validating target directories prevents destructive overwrites.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "commitecho-plugin/.claude-plugin/plugin.json",
+          "commitecho-plugin/.mcp.json",
+          "commitecho-plugin/skills/commitecho/SKILL.md",
+          "src/commitecho/transports/cli.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T11:11:09.004004Z"
+    },
+    {
+      "decision_id": "efae3fae-17db-4b25-b12f-09bef09ccb0f",
+      "revision_id": "d138b4cf-5b24-40a0-ab48-909178818771",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Verify bounded session indexing and plugin generation with dedicated test cases and user documentation.",
+      "choice": "Implement TestBoundedIndex, TestClaudeCodeSessionHook, and TestPluginGenerator in tests/integration/test_plugin_and_lifecycle.py, and document commands in README.md and CAPABILITY_LEDGER.md.",
+      "rationale": "Isolated test suites verify timeout limits, quiet operation, settings preservation, and plugin structure.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "CAPABILITY_LEDGER.md",
+          "README.md",
+          "tests/integration/test_plugin_and_lifecycle.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T11:20:38.431950Z"
+    }
+  ],
+  "evidence": [],
+  "created_at": "2026-10-02T11:20:48.077574Z"
+}
