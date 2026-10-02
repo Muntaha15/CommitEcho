@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "record_id": "06d679b1-da08-4fb5-87b4-c533e401d33f",
+  "change_id": "3a43938d-15fc-49fc-803e-284ee91d8d95",
+  "summary": "docs: add reviewed multi-client integration plan",
+  "prepared_for": {
+    "parent_oid": "69df403d87906290683d8567c40dbcfe96de5202",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "ab0c58ac96c32bfebe146aa803b35ee78fcb9ec8b797e7eea4ebecdce1058862"
+  },
+  "decisions": [
+    {
+      "decision_id": "19fd3677-a5d1-42fd-a510-c55f98297d2f",
+      "revision_id": "31c6a44d-2ca4-4b8a-9973-d60e99ccf473",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "The supplied plan gates commits by substrings in shell commands and assumes common client hook contracts.",
+      "choice": "Revise the handoff to use an opt-in Git commit-msg message-file validator and independently validated native adapters.",
+      "rationale": "Actual message files cover file/editor/amend paths; current official Codex and Antigravity documentation shows distinct schemas. Native command interception cannot establish record binding for arbitrary shell calls.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "MULTI_CLIENT_INTEGRATION_PLAN.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T08:01:03.729748Z"
+    },
+    {
+      "decision_id": "79cafa4e-3fd3-4a88-ac90-38dfadcc6c40",
+      "revision_id": "abc6a8e6-ad58-4bcc-a5d1-6472afa38def",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "The plan overlooks current setup discovery, doctor template comparison, and automatic verifier lifecycle effects.",
+      "choice": "Prioritize a neutral shared skill, supported discovery locations, repository-resolution and preservation checks, and a Claude baseline before optional plugin/hook expansion.",
+      "rationale": "A neutral skill avoids shared-path client identity collisions and doctor's exact-template mismatch. Existing verification can transition a prepared change to committed, so background verification needs explicit lifecycle design.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "MULTI_CLIENT_INTEGRATION_PLAN.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T08:01:03.730760Z"
+    }
+  ],
+  "evidence": [],
+  "created_at": "2026-10-02T09:25:02.826311Z"
+}
