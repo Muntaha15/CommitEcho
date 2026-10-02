@@ -102,6 +102,38 @@ commitecho setup --client codex --dry-run
 
 Without `--client`, setup configures all three profiles. It writes the MCP server config and shared skill; Codex and Copilot receive an activation instruction block, and Antigravity receives a persistent activation rule (`trigger: always_on`). Dry-run lists planned changes rather than a file diff. Test the generated configuration in your client before relying on automatic capture.
 
+
+### Validate commit messages and manage Git hooks
+
+CommitEcho provides universal Git commit message validation to ensure committed code changes have corresponding decision records prepared and staged.
+
+```bash
+# Check a commit message file (advisory warning by default):
+commitecho check-message .git/COMMIT_EDITMSG
+
+# Check strictly (exits with error and rejection if trailer/record/manifest mismatch):
+commitecho check-message .git/COMMIT_EDITMSG --strict
+
+# Safely install the Git commit-msg hook:
+commitecho hook install --git
+# or install in strict mode:
+commitecho hook install --git --strict
+
+# Preview hook installation:
+commitecho hook install --git --dry-run
+
+# Uninstall the hook (removes CommitEcho block, preserving other hook contents):
+commitecho hook uninstall
+```
+
+The validation hook checks that:
+- Commits with code changes carry a valid `CommitEcho-Record: <uuid>` trailer.
+- The referenced record file is staged in the Git index (`.commitecho/records/<uuid>.json`).
+- The staged record's `parent_oid` matches current `HEAD` (or root/amend).
+- The staged code changes match the record's code manifest SHA-256 fingerprint.
+- Empty commits and merges without staged decisions are permitted.
+- Foreign hooks (e.g. from husky, pre-commit) are preserved and never overwritten.
+
 ---
 
 ## MCP server (agent transport)

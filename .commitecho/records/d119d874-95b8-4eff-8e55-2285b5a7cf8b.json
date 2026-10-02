@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "record_id": "d119d874-95b8-4eff-8e55-2285b5a7cf8b",
+  "change_id": "026868cc-613b-4f68-a4ad-9bd21e605a53",
+  "summary": "Implement Phase 2: universal Git message validation and hook installation",
+  "prepared_for": {
+    "parent_oid": "eb44a048ffea455a80ed8082d3ed9353d1578f23",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "aefe93c7bc7917571c105fe54b5a708850dc3ca75fae4a5afb6342a7a5333601"
+  },
+  "decisions": [
+    {
+      "decision_id": "d84ea225-4768-420b-867f-28710ff96c1d",
+      "revision_id": "7154821f-0290-47ad-9803-27c9d355d679",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Shell substring parsing cannot validate Git commits; a universal commit-msg hook validator is needed to check actual message files and staged records.",
+      "choice": "Implement check-message CLI parsing trailers with git interpret-trailers, inspecting the staged record from index, validating schema and code manifest digest, with advisory warning and strict rejection modes.",
+      "rationale": "Validating the actual Git message file and inspecting the staged record directly from the index covers all commit workflows (-m, -F, amend, editors) reliably.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/git/adapter.py",
+          "src/commitecho/transports/cli.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T10:49:41.320238Z"
+    },
+    {
+      "decision_id": "7d74c2ab-8fe7-4bc3-98d0-ceed237f55eb",
+      "revision_id": "3addda50-b36b-4997-a1aa-5e96a75f9e88",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Hook installation must not overwrite foreign hook managers or global configurations, and must execute across varying agent and GUI PATHs on Windows and POSIX.",
+      "choice": "Implement hook install and uninstall CLI with core.hooksPath resolution, global config safety, marked idempotent launcher with Python fallbacks, and foreign hook preservation.",
+      "rationale": "Marked blocks and executable fallback chains guarantee idempotency, safe coexistence, and cross-platform portability.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/transports/cli.py",
+          "src/commitecho/git/adapter.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T10:49:41.320238Z"
+    },
+    {
+      "decision_id": "8ab33944-ce05-4b82-9cf9-b42ef01fe21b",
+      "revision_id": "174358a4-65dc-454b-bc9f-5357d898d847",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Integration tests and documentation are required to verify the complete commit-msg hook lifecycle, strict/advisory modes, amend/merge/empty policies, and foreign hook preservation across platforms.",
+      "choice": "Implement 29 comprehensive test cases in tests/integration/test_hooks.py and document check-message and hook commands in README.md and CAPABILITY_LEDGER.md.",
+      "rationale": "End-to-end Git commit subprocess execution proves that strict mode leaves HEAD unchanged upon failure and permits commits upon success without regression.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "tests/integration/test_hooks.py",
+          "README.md",
+          "CAPABILITY_LEDGER.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T11:08:47.308998Z"
+    }
+  ],
+  "evidence": [],
+  "created_at": "2026-10-02T11:09:13.723756Z"
+}

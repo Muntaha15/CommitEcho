@@ -16,3 +16,17 @@ This ledger documents verified client surfaces, environments, MCP configurations
 - **Git Message Enforcement**: Use repository Git `commit-msg` hooks for universal message validation across all clients. Native tool-interception hooks are optional reminders/automation only.
 - **Client Identification**: Each client passes its active profile ID (`antigravity`, `codex`, `copilot_vscode`, `claude_code`) in `client` during `begin_change`.
 - **Status Accounting**: Clients without verified live runtime tests are marked as **Untested** or **Pending**, never claimed as validated through static SDK checks alone.
+
+## Phase 2: Universal Git Message Validation & Hook Management
+
+- **CLI Commands**:
+  - `commitecho check-message MESSAGE_FILE [--repo PATH] [--strict]`: Inspects commit message trailers, index-staged record JSON, schema validity, parent commit match, and staged code manifest SHA-256 fingerprint.
+  - `commitecho hook install --git [--strict] [--dry-run]`: Installs marked, idempotent launcher in repository-local hook path (respects `core.hooksPath` and linked worktrees; refuses external/global hooks).
+  - `commitecho hook uninstall [--dry-run]`: Deletes CommitEcho hook file or removes managed block, preserving foreign hooks.
+- **Verified Policies**:
+  - Empty commits without staged code are permitted without records.
+  - In-progress merges (`MERGE_HEAD`) are permitted without records.
+  - Amending message of an already-verified HEAD commit is permitted.
+  - Code changes during amend or stale preparations are rejected in strict mode.
+  - Foreign hooks without CommitEcho markers are left untouched with manual integration instructions.
+- **Verification**: 29/29 tests passing in `tests/integration/test_hooks.py`.

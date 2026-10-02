@@ -243,6 +243,25 @@ def fingerprint_manifest(manifest: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def parse_trailers(message: str, cwd: str | None = None) -> dict[str, list[str]]:
+    """Parse Git trailers from a message string using git interpret-trailers --parse."""
+    result = subprocess.run(
+        [_git_exe(), "interpret-trailers", "--parse"],
+        input=message,
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    if result.returncode:
+        raise GitError(f"Cannot parse trailers: {result.stderr.strip()}")
+    trailers: dict[str, list[str]] = {}
+    for line in result.stdout.splitlines():
+        if ": " in line:
+            k, _, v = line.partition(": ")
+            trailers.setdefault(k.strip(), []).append(v.strip())
+    return trailers
+
+
 # ---------------------------------------------------------------------------
 # High-level adapter
 # ---------------------------------------------------------------------------
@@ -288,21 +307,71 @@ class GitAdapter:
     def read_commit_trailers(self, oid: str) -> dict[str, list[str]]:
         """Return all Git trailers for *oid* as {key: [value, ...]}."""
         msg = _run(["log", "-1", "--format=%B", oid], cwd=self._info.worktree_dir)
-        result = subprocess.run(
-            [_git_exe(), "interpret-trailers", "--parse"],
-            input=msg,
-            capture_output=True,
-            text=True,
+        return parse_trailers(msg, cwd=self._info.worktree_dir)
+
+    def read_message_trailers(self, message: str) -> dict[str, list[str]]:
+        """Return all Git trailers for a commit message string as {key: [value, ...]}."""
+        return parse_trailers(message, cwd=self._info.worktree_dir)
+
+    def read_file_from_index(self, path: str) -> bytes | None:
+        """Read a file from stage 0 of the Git index. Return None if not staged."""
+        norm_path = Path(path).as_posix()
+        res = subprocess.run(
+            [_git_exe(), "show", f":{norm_path}"],
             cwd=self._info.worktree_dir,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
         )
-        if result.returncode:
-            raise GitError(f"Cannot parse commit trailers: {result.stderr.strip()}")
-        trailers: dict[str, list[str]] = {}
-        for line in result.stdout.splitlines():
-            if ": " in line:
-                k, _, v = line.partition(": ")
-                trailers.setdefault(k.strip(), []).append(v.strip())
-        return trailers
+        if res.returncode != 0:
+            return None
+        return res.stdout
+
+    def get_hook_path(self, hook_name: str) -> tuple[Path, bool]:
+        """Locate the effective hook path for *hook_name*.
+
+        Returns (hook_path, is_local_repo).
+        is_local_repo is False if core.hooksPath resolves to a global or system location.
+        """
+        try:
+            res = subprocess.run(
+                [_git_exe(), "config", "--show-origin", "--get", "core.hooksPath"],
+                cwd=self._info.worktree_dir,
+                capture_output=True,
+                text=True,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                origin, _, val = res.stdout.strip().partition("\t")
+                val = val.strip()
+                hooks_dir = Path(val)
+                wt = Path(self._info.worktree_dir).resolve()
+                cd = Path(self._info.common_dir).resolve()
+
+                if not hooks_dir.is_absolute():
+                    hooks_dir = (wt / hooks_dir).resolve()
+                else:
+                    hooks_dir = hooks_dir.resolve()
+
+                origin_file = origin.removeprefix("file:").strip()
+                origin_path = Path(origin_file)
+                if not origin_path.is_absolute():
+                    origin_path = (wt / origin_path).resolve()
+                else:
+                    origin_path = origin_path.resolve()
+
+                is_local = False
+                try:
+                    is_config_local = origin_path.is_relative_to(cd) or origin_path.is_relative_to(wt)
+                    is_target_local = hooks_dir.is_relative_to(cd) or hooks_dir.is_relative_to(wt)
+                    is_local = is_config_local and is_target_local
+                except (ValueError, AttributeError):
+                    pass
+
+                return hooks_dir / hook_name, is_local
+        except Exception:
+            pass
+
+        default_dir = (Path(self._info.common_dir) / "hooks").resolve()
+        return default_dir / hook_name, True
 
     def file_exists_in_commit(self, oid: str, path: str) -> bool:
         """Check whether *path* exists in the tree of commit *oid*."""

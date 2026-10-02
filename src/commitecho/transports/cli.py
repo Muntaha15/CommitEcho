@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import click
@@ -739,3 +742,342 @@ def setup(
         click.echo("\n(dry-run: no files were written)")
     else:
         click.echo("\nSetup complete.")
+
+
+# ---------------------------------------------------------------------------
+# check-message
+# ---------------------------------------------------------------------------
+
+
+def _is_merge_in_progress(git: GitAdapter) -> bool:
+    try:
+        from commitecho.git.adapter import _git_exe
+        res = subprocess.run(
+            [_git_exe(), "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+            cwd=git.repo_info.worktree_dir,
+            capture_output=True,
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+@main.command("check-message")
+@click.argument("message_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--repo", default=None, help="Path to the Git repository.")
+@click.option("--strict", is_flag=True, default=False, help="Reject commits that fail validation.")
+def check_message(message_file: Path, repo: str | None, strict: bool) -> None:
+    """Validate that a commit message carries a valid, verified CommitEcho record.
+
+    Designed for Git's commit-msg hook. Checks trailer syntax, staged index presence,
+    schema validity, parent commit match, and code manifest fingerprint match.
+    """
+    git = _resolve_repo(repo)
+    raw_message = message_file.read_text(encoding="utf-8", errors="replace")
+
+    trailers = git.read_message_trailers(raw_message)
+    record_trailers = [
+        v for k, vals in trailers.items()
+        if k.lower() == "commitecho-record"
+        for v in vals
+    ]
+
+    staged_changes = git.staged_changes()
+    staged_code = [
+        e for e in staged_changes
+        if not e.path.startswith(".commitecho/records/")
+    ]
+
+    # 1. No trailer found
+    if not record_trailers:
+        if not staged_code:
+            click.echo("[info] CommitEcho: No staged code changes; CommitEcho record not required.")
+            return
+
+        if _is_merge_in_progress(git):
+            click.echo("[info] CommitEcho: Merge commit detected; CommitEcho record not required.")
+            return
+
+        msg = (
+            "CommitEcho: Missing 'CommitEcho-Record' trailer in commit message.\n"
+            "  Capture decisions and prepare a record before committing."
+        )
+        if strict:
+            click.echo(f"[error] Commit rejected: {msg}", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"[warn] {msg}")
+            return
+
+    # 2. Multiple trailers found
+    if len(record_trailers) > 1:
+        msg = f"Multiple 'CommitEcho-Record' trailers found in commit message ({len(record_trailers)})."
+        if strict:
+            click.echo(f"[error] Commit rejected: {msg}", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"[warn] CommitEcho: {msg}")
+            return
+
+    # 3. Canonical UUID format
+    record_id_str = record_trailers[0].strip()
+    try:
+        record_uuid = uuid.UUID(record_id_str)
+        if str(record_uuid) != record_id_str.lower():
+            raise ValueError("UUID must be in canonical lowercase hyphenated format.")
+    except Exception as exc:
+        msg = f"Invalid 'CommitEcho-Record' UUID '{record_id_str}': {exc}"
+        if strict:
+            click.echo(f"[error] Commit rejected: {msg}", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"[warn] CommitEcho: {msg}")
+            return
+
+    # 4. Inspect referenced record from the STAGED GIT INDEX
+    record_path = f".commitecho/records/{record_uuid}.json"
+    record_bytes = git.read_file_from_index(record_path)
+    if record_bytes is None:
+        msg = (
+            f"Referenced record '{record_path}' is not staged in the Git index.\n"
+            f"  Run 'git add {record_path}' to stage the record."
+        )
+        if strict:
+            click.echo(f"[error] Commit rejected: {msg}", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"[warn] CommitEcho: {msg}")
+            return
+
+    # 5. Validate record JSON and schema
+    try:
+        record_data = json.loads(record_bytes.decode("utf-8"))
+    except Exception as exc:
+        msg = f"Staged record '{record_path}' contains malformed JSON: {exc}"
+        if strict:
+            click.echo(f"[error] Commit rejected: {msg}", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"[warn] CommitEcho: {msg}")
+            return
+
+    if record_data.get("record_id") != str(record_uuid):
+        msg = (
+            f"Staged record '{record_path}' ID mismatch: "
+            f"expected '{record_uuid}', got '{record_data.get('record_id')}'."
+        )
+        if strict:
+            click.echo(f"[error] Commit rejected: {msg}", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"[warn] CommitEcho: {msg}")
+            return
+
+    # 6. Verify parent OID match against HEAD
+    head_oid = git.head_oid()
+    prepared_parent = record_data.get("prepared_for", {}).get("parent_oid")
+    expected_parent_for_head = head_oid if head_oid is not None else ("0" * len(prepared_parent) if prepared_parent else "0" * 40)
+
+    is_parent_match = (prepared_parent == expected_parent_for_head)
+    if not is_parent_match and head_oid is not None:
+        try:
+            head_parent = git.resolve(f"{head_oid}^")
+        except Exception:
+            head_parent = "0" * len(prepared_parent) if prepared_parent else "0" * 40
+        if prepared_parent == head_parent:
+            is_parent_match = True
+
+    if not is_parent_match:
+        msg = (
+            f"Record prepared for parent {prepared_parent or '(root)'}, "
+            f"but current HEAD is {head_oid or '(root)'} (stale preparation)."
+        )
+        if strict:
+            click.echo(f"[error] Commit rejected: {msg}", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"[warn] CommitEcho: {msg}")
+            return
+
+    # 7. Compare code manifest SHA256 digest
+    expected_digest = record_data.get("prepared_for", {}).get("code_manifest_sha256")
+    actual_digest, _ = git.code_fingerprint()
+    if actual_digest != expected_digest:
+        # Check if amending message only with existing HEAD record
+        if head_oid is not None and not staged_code:
+            head_trailers = git.read_commit_trailers(head_oid)
+            head_records = [
+                v for k, vs in head_trailers.items()
+                if k.lower() == "commitecho-record"
+                for v in vs
+            ]
+            if any(v.strip().lower() == str(record_uuid).lower() for v in head_records):
+                click.echo(f"[ok] CommitEcho record {record_uuid} verified (amending message for HEAD).")
+                return
+
+        msg = (
+            f"Staged changes do not match CommitEcho record preparation:\n"
+            f"  Expected manifest digest: {expected_digest}\n"
+            f"  Actual staged digest:     {actual_digest}\n"
+            "  The staged code has changed since preparation; please re-prepare."
+        )
+        if strict:
+            click.echo(f"[error] Commit rejected: {msg}", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"[warn] CommitEcho: {msg}")
+            return
+
+    click.echo(f"[ok] CommitEcho record {record_uuid} verified against staged changes.")
+
+
+# ---------------------------------------------------------------------------
+# hook
+# ---------------------------------------------------------------------------
+
+_HOOK_START_MARKER = "# --- commitecho-hook-start ---"
+_HOOK_END_MARKER = "# --- commitecho-hook-end ---"
+
+
+def _generate_hook_block(strict: bool) -> str:
+    py_path = Path(sys.executable).as_posix()
+    strict_flag = "--strict" if strict else ""
+    return (
+        f"{_HOOK_START_MARKER}\n"
+        "# Managed by CommitEcho. Do not edit this block.\n"
+        f'TARGET_PYTHON="{py_path}"\n'
+        f'STRICT_FLAG="{strict_flag}"\n'
+        'if [ -x "$TARGET_PYTHON" ]; then\n'
+        '    "$TARGET_PYTHON" -m commitecho check-message "$1" $STRICT_FLAG || exit $?\n'
+        'elif command -v commitecho >/dev/null 2>&1; then\n'
+        '    commitecho check-message "$1" $STRICT_FLAG || exit $?\n'
+        'elif command -v python3 >/dev/null 2>&1; then\n'
+        '    python3 -m commitecho check-message "$1" $STRICT_FLAG || exit $?\n'
+        'elif command -v python >/dev/null 2>&1; then\n'
+        '    python -m commitecho check-message "$1" $STRICT_FLAG || exit $?\n'
+        'else\n'
+        '    echo "[commitecho] Warning: Neither python nor commitecho found on PATH; skipping message check." >&2\n'
+        'fi\n'
+        f"{_HOOK_END_MARKER}\n"
+    )
+
+
+def _display_rel_path(path: Path, worktree: Path | str) -> str:
+    try:
+        return path.relative_to(worktree).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+@main.group()
+def hook() -> None:
+    """Manage Git and agent lifecycle hooks."""
+
+
+@hook.command("install")
+@click.option("--git", "use_git", is_flag=True, default=True, help="Install Git commit-msg hook.")
+@click.option("--repo", default=None, help="Path to the Git repository.")
+@click.option("--strict", is_flag=True, default=False, help="Reject commits that fail message validation.")
+@click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
+def hook_install(use_git: bool, repo: str | None, strict: bool, dry_run: bool) -> None:
+    """Install the Git commit-msg message validation hook.
+
+    Safely installs or updates the CommitEcho commit-msg hook. Preserves foreign hooks.
+    """
+    git = _resolve_repo(repo)
+    hook_file, is_local = git.get_hook_path("commit-msg")
+    wt = Path(git.repo_info.worktree_dir)
+
+    if not is_local:
+        click.echo(
+            f"[warn] core.hooksPath resolves to external/global location '{hook_file.parent}'.\n"
+            "Refusing to modify global configuration. Configure repository-local hooks or integrate manually.",
+            err=True,
+        )
+        sys.exit(1)
+
+    block = _generate_hook_block(strict)
+    display_path = _display_rel_path(hook_file, wt)
+
+    if not hook_file.exists():
+        action = f"[create] {display_path}: install CommitEcho commit-msg hook (strict={strict})."
+        new_content = f"#!/bin/sh\n\n{block}"
+    else:
+        existing = hook_file.read_text(encoding="utf-8", errors="replace")
+        if _HOOK_START_MARKER in existing and _HOOK_END_MARKER in existing:
+            pattern = re.compile(
+                rf"{re.escape(_HOOK_START_MARKER)}.*?{re.escape(_HOOK_END_MARKER)}\n?",
+                re.DOTALL,
+            )
+            new_content = pattern.sub(block, existing)
+            if new_content == existing:
+                click.echo(f"[skip] {display_path}: hook already up to date (strict={strict}).")
+                return
+            action = f"[update] {display_path}: update CommitEcho commit-msg hook (strict={strict})."
+        else:
+            click.echo(
+                f"[warn] Existing commit-msg hook found at '{display_path}' not managed by CommitEcho.\n"
+                "Leaving existing hook unchanged to preserve foreign tools.\n\n"
+                "To integrate CommitEcho into your existing hook, add the following line:\n"
+                f'  commitecho check-message "$1" {"--strict" if strict else ""}\n',
+                err=True,
+            )
+            return
+
+    click.echo(action)
+    if not dry_run:
+        hook_file.parent.mkdir(parents=True, exist_ok=True)
+        hook_file.write_text(new_content, encoding="utf-8")
+        try:
+            mode = os.stat(hook_file).st_mode
+            os.chmod(hook_file, mode | 0o755)
+        except OSError:
+            pass
+        click.echo("Hook installed successfully.")
+    else:
+        click.echo("(dry-run: no files were written)")
+
+
+@hook.command("uninstall")
+@click.option("--git", "use_git", is_flag=True, default=True, help="Uninstall Git commit-msg hook.")
+@click.option("--repo", default=None, help="Path to the Git repository.")
+@click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
+def hook_uninstall(use_git: bool, repo: str | None, dry_run: bool) -> None:
+    """Uninstall the CommitEcho Git commit-msg hook."""
+    git = _resolve_repo(repo)
+    hook_file, is_local = git.get_hook_path("commit-msg")
+    wt = Path(git.repo_info.worktree_dir)
+    display_path = _display_rel_path(hook_file, wt)
+
+    if not hook_file.exists():
+        click.echo(f"[skip] No hook file found at '{display_path}'.")
+        return
+
+    existing = hook_file.read_text(encoding="utf-8", errors="replace")
+    if _HOOK_START_MARKER not in existing or _HOOK_END_MARKER not in existing:
+        click.echo(f"[skip] '{display_path}' is not managed by CommitEcho; leaving unchanged.")
+        return
+
+    pattern = re.compile(
+        rf"{re.escape(_HOOK_START_MARKER)}.*?{re.escape(_HOOK_END_MARKER)}\n?",
+        re.DOTALL,
+    )
+    remainder = pattern.sub("", existing).strip()
+
+    clean_lines = [l for l in remainder.splitlines() if l.strip() and not l.strip().startswith("#!")]
+    if not clean_lines:
+        action = f"[remove] {display_path}: delete CommitEcho commit-msg hook file."
+        click.echo(action)
+        if not dry_run:
+            hook_file.unlink()
+            click.echo("Hook uninstalled successfully.")
+        else:
+            click.echo("(dry-run: no files were changed)")
+    else:
+        action = f"[update] {display_path}: remove CommitEcho block, preserving other hook contents."
+        click.echo(action)
+        if not dry_run:
+            hook_file.write_text(remainder + "\n", encoding="utf-8")
+            click.echo("Hook block removed successfully.")
+        else:
+            click.echo("(dry-run: no files were changed)")
