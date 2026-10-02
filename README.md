@@ -174,6 +174,20 @@ commitecho setup --client copilot_vscode
 | `.agents/skills/commitecho/SKILL.md` | Shared capture/recall skill |
 | `.github/copilot-instructions.md` | Activation instruction block (appended) |
 
+### Claude Code
+
+```bash
+commitecho setup --client claude_code
+```
+
+| File | Purpose |
+|---|---|
+| `.mcp.json` | Registers the `commitecho` MCP server entry under `mcpServers` |
+| `.claude/skills/commitecho/SKILL.md` | Shared capture/recall skill |
+| `CLAUDE.md` | Activation instruction block (appended) |
+
+Claude Code requires approving project-local MCP servers when launching a project session. For shared repository configurations, use `--portable` (`commitecho setup --client claude_code --portable`) so machine-specific paths are not committed.
+
 ---
 
 ## Typical workflow

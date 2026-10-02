@@ -671,7 +671,7 @@ def export(change_id: str, repo: str | None, output: str | None) -> None:
 
 @main.command()
 @click.option("--client", "client_ids", multiple=True,
-              help="Client IDs to configure (codex, antigravity, copilot_vscode). Repeat for multiple.")
+              help="Client IDs to configure (codex, antigravity, copilot_vscode, claude_code). Repeat for multiple.")
 @click.option("--repo", default=None, help="Path to the Git repository / project root.")
 @click.option("--server-cmd", default=None,
               help="Command used to launch the server (default: auto-detect 'commitecho serve').")

@@ -191,7 +191,7 @@ def test_server_command_with_spaces_stored_as_single_element(tmp_path: Path) -> 
     )
 
 
-@pytest.mark.parametrize("client_id", ["codex", "antigravity"])
+@pytest.mark.parametrize("client_id", ["codex", "antigravity", "copilot_vscode", "claude_code"])
 def test_setup_command_launches_mcp_server(tmp_path: Path, client_id: str) -> None:
     """The generated command must complete a real stdio MCP handshake without PYTHONPATH."""
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
@@ -716,4 +716,156 @@ def test_portable_server_command(tmp_path: Path) -> None:
     assert entry["command"] == "commitecho"
     assert entry["args"] == ["serve"]
     assert "--repo" not in entry["args"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 tests: Claude Code baseline profile
+# ---------------------------------------------------------------------------
+
+
+def test_claude_code_profile_configuration_and_preservation(tmp_path: Path) -> None:
+    """Claude Code setup writes .mcp.json and CLAUDE.md, and preserves existing content."""
+    profile = ALL_PROFILES["claude_code"]
+    assert profile.mcp_config_path == ".mcp.json"
+    assert profile.mcp_servers_key == "mcpServers"
+    assert profile.skill_path == ".claude/skills/commitecho/SKILL.md"
+    assert profile.instruction_path == "CLAUDE.md"
+
+    # Pre-populate existing .mcp.json and CLAUDE.md
+    mcp_file = tmp_path / ".mcp.json"
+    mcp_file.write_text(json.dumps({"mcpServers": {"other-server": {"command": "other", "args": []}}}), encoding="utf-8")
+    claude_md = tmp_path / "CLAUDE.md"
+    claude_md.write_text("# Project Notes\n\nCustom user notes here.\n", encoding="utf-8")
+
+    gen = _make_generator(tmp_path)
+    changes = gen.generate(profile, dry_run=False)
+
+    assert any("[add]" in c and ".mcp.json" in c for c in changes)
+    assert any("[add]" in c and "CLAUDE.md" in c for c in changes)
+
+    # Verify merged .mcp.json preserved other server
+    loaded_mcp = json.loads(mcp_file.read_text(encoding="utf-8"))
+    assert "other-server" in loaded_mcp["mcpServers"]
+    assert "commitecho" in loaded_mcp["mcpServers"]
+
+    # Verify CLAUDE.md preserved custom user notes and appended activation block
+    claude_md_content = claude_md.read_text(encoding="utf-8")
+    assert "# Project Notes" in claude_md_content
+    assert "Custom user notes here." in claude_md_content
+    assert "<!-- commitecho-activation -->" in claude_md_content
+    assert "## CommitEcho" in claude_md_content
+
+    # Skill installed in .claude/skills/commitecho/SKILL.md
+    skill_file = tmp_path / ".claude" / "skills" / "commitecho" / "SKILL.md"
+    assert skill_file.exists()
+    assert skill_file.read_text(encoding="utf-8") == _SKILL_TEMPLATE
+
+
+def test_claude_code_lifecycle_with_project_dir_env(tmp_path: Path) -> None:
+    """Claude Code stdio lifecycle with CLAUDE_PROJECT_DIR fallback without --repo."""
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    from uuid import uuid4
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    git("init", "--initial-branch=main")
+    git("config", "user.name", "Claude Code Test")
+    git("config", "user.email", "claude@commitecho.test")
+    (tmp_path / "README.md").write_text("# Claude Code lifecycle\n", encoding="utf-8")
+    git("add", "README.md")
+    git("commit", "-m", "initial commit")
+    base_oid = git("rev-parse", "HEAD")
+
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+
+    # Launch server with python -m commitecho serve (no --repo argument)
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "commitecho", "serve"],
+        env=env,
+    )
+
+    async def call(session, name, **args):
+        result = await asyncio.wait_for(session.call_tool(name, args), timeout=10)
+        assert not result.is_error, result.content
+        return json.loads(result.content[0].text)
+
+    async def lifecycle():
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await asyncio.wait_for(session.initialize(), timeout=10)
+
+                # 1. begin_change as claude_code
+                change = await call(
+                    session, "begin_change",
+                    title="Implement token bucket rate limiter",
+                    client="claude_code",
+                    operation_id=str(uuid4()),
+                )
+                change_id = change["change_id"]
+
+                # 2. record_decisions
+                recorded = await call(
+                    session, "record_decisions",
+                    change_id=change_id,
+                    expected_revision=change["revision_counter"],
+                    operation_id=str(uuid4()),
+                    decisions=[{
+                        "problem": "Smooth bursty traffic",
+                        "choice": "Token bucket algorithm",
+                        "rationale": "Allows bursts up to capacity while maintaining constant fill rate",
+                        "disposition": "selected",
+                        "code_scope": {"paths": ["limiter.py"]},
+                    }],
+                )
+
+                # 3. Code change & git add
+                (tmp_path / "limiter.py").write_text(
+                    "class Limiter:\n    def __init__(self, capacity=10):\n        self.capacity = capacity\n",
+                    encoding="utf-8",
+                )
+                git("add", "limiter.py")
+
+                # 4. prepare_commit
+                prepared = await call(
+                    session, "prepare_commit",
+                    change_id=change_id,
+                    expected_revision=recorded["revision_counter"],
+                    selected_revision_ids=recorded["revision_ids"],
+                    summary="Add token bucket rate limiter",
+                    operation_id=str(uuid4()),
+                )
+                git("add", prepared["record_path"])
+                git("commit", "-m", f"Add token bucket limiter\n\n{prepared['trailer']}")
+                commit_oid = git("rev-parse", "HEAD")
+
+                # 5. verify_commit
+                verified = await call(session, "verify_commit", commit_oid=commit_oid)
+                assert verified["outcome"] == "exact"
+
+        # 6. Index & restart
+        subprocess.run(
+            [sys.executable, "-m", "commitecho", "index", "--repo", str(tmp_path)],
+            cwd=tmp_path, env=env, check=True, capture_output=True, text=True,
+        )
+
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await asyncio.wait_for(session.initialize(), timeout=10)
+                history = await call(session, "search_history", path="limiter.py")
+                assert history["coverage"] == "full"
+                assert history["results"][0]["choice"] == "Token bucket algorithm"
+
+                evidence = await call(session, "get_evidence", record_id=prepared["record_id"])
+                assert evidence["found"] is True
+                assert evidence["commit_oid"] == commit_oid
+
+    asyncio.run(lifecycle())
+
 

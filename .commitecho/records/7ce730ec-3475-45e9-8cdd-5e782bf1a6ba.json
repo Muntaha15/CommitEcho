@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "record_id": "7ce730ec-3475-45e9-8cdd-5e782bf1a6ba",
+  "change_id": "495a17d9-a584-49c9-9ebd-2325f3131ea8",
+  "summary": "feat(integrations): add Claude Code baseline profile and tests",
+  "prepared_for": {
+    "parent_oid": "8b28f05f0c80fc56ce5cba889d6493e49dad4261",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "a821a088c6cef26d00bfa8ab4f215ae61a334e9e7dcea82b05920e8af17720d3"
+  },
+  "decisions": [
+    {
+      "decision_id": "3b20a547-812c-4cdb-9faa-5a0e346a30e1",
+      "revision_id": "6c64d0c6-9a53-406f-b021-624ca6be8b8a",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Claude Code was not supported as a declarative client profile, lacking automated config generation, skill installation, and documentation.",
+      "choice": "Add CLAUDE_CODE profile to ALL_PROFILES with .mcp.json, mcpServers, .claude/skills/commitecho/SKILL.md, and CLAUDE.md. Update CLI help, schema descriptions, and domain models.",
+      "rationale": "Enables single-command setup for Claude Code while preserving existing .mcp.json entries and CLAUDE.md project instructions.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/integrations/profiles.py",
+          "src/commitecho/transports/cli.py",
+          "src/commitecho/transports/mcp_server.py",
+          "src/commitecho/domain/models.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T09:42:37.780722Z"
+    },
+    {
+      "decision_id": "8c309fb6-4346-475c-9180-0d7cf9a851b7",
+      "revision_id": "d42b9388-2862-47da-85c3-222152f8bc3d",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Real stdio launch and handshake tests only checked codex and antigravity explicitly.",
+      "choice": "Extend real stdio MCP handshake tests to cover all profiles including claude_code and copilot_vscode, and test full change lifecycle with client='claude_code'.",
+      "rationale": "Validates that generated configuration for all profiles produces a working stdio MCP server without PYTHONPATH dependencies.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "tests/integration/test_setup.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T09:42:37.780722Z"
+    }
+  ],
+  "evidence": [],
+  "created_at": "2026-10-02T09:50:58.873777Z"
+}

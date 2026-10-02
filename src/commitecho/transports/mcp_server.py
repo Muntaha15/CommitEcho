@@ -33,7 +33,7 @@ from commitecho.application.retrieve import RetrieveService
 
 class BeginChangeInput(BaseModel):
     title: str = Field(description="Short description of the work being started.")
-    client: str = Field(description="Client identifier, e.g. 'codex', 'antigravity', 'copilot_vscode'.")
+    client: str = Field(description="Client identifier, e.g. 'codex', 'antigravity', 'copilot_vscode', 'claude_code'.")
     operation_id: str = Field(description="Caller-generated idempotency key (UUID recommended).")
     client_version: str | None = Field(default=None, description="Client version string.")
     native_session_id: str | None = Field(default=None, description="Opaque native session ID from the client.")

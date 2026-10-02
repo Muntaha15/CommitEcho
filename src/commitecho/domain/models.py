@@ -99,7 +99,7 @@ class Session(BaseModel):
     """A single client session contributing to one or more Changes."""
 
     session_id: str = Field(default_factory=_new_uuid)
-    client: str  # e.g. "codex", "antigravity", "copilot_vscode"
+    client: str  # e.g. "codex", "antigravity", "copilot_vscode", "claude_code"
     client_version: str | None = None
     native_session_id: str | None = None  # opaque; client-supplied
     worktree_id: str  # repository-relative worktree identifier

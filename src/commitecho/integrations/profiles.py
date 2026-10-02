@@ -139,8 +139,23 @@ COPILOT_VSCODE = ClientProfile(
     ],
 )
 
+CLAUDE_CODE = ClientProfile(
+    client_id="claude_code",
+    display_name="Claude Code",
+    mcp_config_path=".mcp.json",
+    mcp_servers_key="mcpServers",
+    config_format="json",
+    skill_path=".claude/skills/commitecho/SKILL.md",
+    instruction_path="CLAUDE.md",
+    instruction_format="plain",
+    known_limitations=[
+        "Claude Code requires explicit approval to load project-local MCP servers.",
+        "Project .mcp.json is shareable only when using portable configuration.",
+    ],
+)
+
 ALL_PROFILES: dict[str, ClientProfile] = {
-    p.client_id: p for p in [CODEX, ANTIGRAVITY, COPILOT_VSCODE]
+    p.client_id: p for p in [CODEX, ANTIGRAVITY, COPILOT_VSCODE, CLAUDE_CODE]
 }
 
 

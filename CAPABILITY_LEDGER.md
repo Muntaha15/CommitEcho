@@ -9,7 +9,7 @@ This ledger documents verified client surfaces, environments, MCP configurations
 | `antigravity` | Antigravity IDE | Windows / POSIX | `.agents/mcp_config.json` (`mcpServers`) | `.agents/skills/commitecho/SKILL.md` | Verified | Tested with MCP SDK 2.2+. Native rule in `.agents/rules/commitecho.md`. Stdio handshake verified. |
 | `codex` | Codex (local) | Windows / POSIX | `.codex/config.toml` (`mcp_servers`) | `.agents/skills/commitecho/SKILL.md` | Verified | Folder-based skill in `.agents/skills`. Project instructions in root `AGENTS.md`. Stdio handshake verified. |
 | `copilot_vscode` | GitHub Copilot in VS Code | Windows / POSIX | `.vscode/mcp.json` (`servers`) | `.agents/skills/commitecho/SKILL.md` | Untested | Config generator implemented; live session acceptance pending Copilot environment. |
-| `claude_code` | Claude Code CLI | Windows / POSIX | `.mcp.json` (`mcpServers`) | `.claude/skills/commitecho/SKILL.md` | Pending Phase 1 | Supports `CLAUDE_PROJECT_DIR`. Implementation targeted for Phase 1. |
+| `claude_code` | Claude Code CLI | Windows / POSIX | `.mcp.json` (`mcpServers`) | `.claude/skills/commitecho/SKILL.md` | Protocol verified | Config generator, stdio handshake, and `CLAUDE_PROJECT_DIR` support verified. Live interactive session check pending. |
 
 ## Notes on Native Integration and Hook Contracts
 
