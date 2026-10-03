@@ -4,7 +4,7 @@ Preserve the decisions behind code changes and recall them through your coding a
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.1.1 in development (`0.1.1.dev0`); v0.1.0 is the published release.** Four local client configuration profiles are available. On 2026-10-03, interactive Codex completed capture, commit, verification, indexing, and recall in a fresh process. Antigravity IDE reported capture, commit, verification, indexing, and linked-evidence recall; its report does not document a process restart. Claude Code and Copilot interactive acceptance, native lifecycle hooks, and plugin loading remain pending. See the [Codex results](CODEX_LIVE_TEST.md), [Antigravity results](ANTIGRAVITY_LIVE_TEST.md), and [capability ledger](CAPABILITY_LEDGER.md).
+**Status: v0.1.1 in development (`0.1.1.dev0`); v0.1.0 is the published release.** Four local client configuration profiles are available. On 2026-10-03, interactive Codex and Antigravity IDE completed capture, commit, verification, indexing, process restart, and recall in a fresh process. Claude Code and Copilot interactive acceptance, native lifecycle hooks, and plugin loading remain pending. See the [Codex results](CODEX_LIVE_TEST.md), [Antigravity results](ANTIGRAVITY_LIVE_TEST.md), and [capability ledger](CAPABILITY_LEDGER.md).
 
 ## Install
 

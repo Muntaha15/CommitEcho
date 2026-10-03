@@ -19,17 +19,19 @@ See [the implementation review](MULTI_CLIENT_INTEGRATION_REVIEW.md).
   approvals. Earlier non-interactive attempts failed under approval policy
   `never`. Explicit indexing recovered initially empty recall; the record's
   attached evidence was empty. Automatic skill discovery remains unqualified.
-- Follow-up [Antigravity live test](ANTIGRAVITY_LIVE_TEST.md): the saved IDE
-  report records native discovery, capture, exact verification, indexing, and
-  linked-evidence recall. It does not document a process restart.
+- Follow-up [Antigravity live test](ANTIGRAVITY_LIVE_TEST.md): native capture,
+  exact verification, indexing, process restart, and fresh-process recall
+  passed using the generated Antigravity profile in a separate fixture with
+  spaces. Automated protocol restart tests pass for Antigravity alongside Codex.
 - Baseline full suite: 179 passed in 274.90 seconds, including real stdio tests.
   These passing tests did not cover the reproduced preservation/gate failures.
 - Repaired full suite: **238 passed, 1 skipped in 341.08 seconds**. The skip is
   directory-symlink creation requiring unavailable Windows permission. All live
   MCP handshakes ran; no protocol timeout was increased. The run used the project
   environment with network/local-socket permission and isolated Git fixtures.
-- Final `0.1.1.dev0` checkout: **240 passed, 1 skipped in 350.41 seconds**,
-  including the development-version plugin regression and all live MCP checks.
+- Final `0.1.1.dev0` checkout: **241 passed, 1 skipped in 362.22 seconds**,
+  including the development-version plugin regression, parametrized restart
+  lifecycle test across Codex and Antigravity, and all live MCP checks.
   The same Windows directory-symlink permission test skipped. Package/CLI
   metadata and portable plugin/skill consistency checks passed.
 
@@ -38,7 +40,7 @@ See [the implementation review](MULTI_CLIENT_INTEGRATION_REVIEW.md).
 | Client | Configuration / skill / activation | Protocol evidence | Actual revised client acceptance |
 | --- | --- | --- | --- |
 | Codex local | `.codex/config.toml`; `.agents/skills/commitecho/SKILL.md`; root `AGENTS.md` | Generated-command stdio tests; connected tools in this review chat | Interactive CLI 0.159.0-alpha.12.1 capture and fresh-process recall passed on Windows. Automatic skill discovery, unattended/cloud/native events, and cross-client handoff pending. `AGENTS.override.md` can mask activation. |
-| Antigravity IDE | `.agents/mcp_config.json`; shared `.agents` skill; `.agents/rules/commitecho.md` | Generated-command stdio tests; saved IDE 1.107.0 live report | Native discovery, capture, verification, indexing, and linked-evidence recall reported passed on Windows. Process restart is not documented; CLI is a separate untested surface. |
+| Antigravity IDE | `.agents/mcp_config.json`; shared `.agents` skill; `.agents/rules/commitecho.md` | Generated-command stdio tests; live IDE 1.107.0 report | Native discovery, capture, verification, indexing, process restart, and fresh-process recall passed on Windows. CLI is a separate untested surface; native hooks/cross-client pending. |
 | Copilot VS Code | `.vscode/mcp.json`; shared `.agents` skill; `.github/copilot-instructions.md` | Generated-command stdio tests | Interactive discovery/workflow pending. Local versus Agent Host/native harness not qualified. |
 | Claude Code | `.mcp.json`; `.claude/skills/commitecho/SKILL.md`; `CLAUDE.md` | Generated-command stdio tests; server reads documented `CLAUDE_PROJECT_DIR` | Interactive project approval, discovery, workflow, plugin loading, and native events pending; client unavailable. |
 

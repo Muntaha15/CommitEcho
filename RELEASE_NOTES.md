@@ -16,15 +16,15 @@ symlink test skipped because this Windows account lacks creation permission.
 All live MCP tests ran. No new dependency or storage migration was introduced.
 
 Later 2026-10-03 fixture runs add versioned evidence: interactive Codex CLI
-completed capture, exact verification, and fresh-process recall after explicit
-indexing; Antigravity IDE reported native capture and linked-evidence recall,
-without a documented process restart. See [Codex results](CODEX_LIVE_TEST.md)
+and Antigravity IDE completed capture, exact verification, process restart,
+and fresh-process recall after explicit indexing. See [Codex results](CODEX_LIVE_TEST.md)
 and [Antigravity results](ANTIGRAVITY_LIVE_TEST.md). The canonical skill is now
 version 4 and requires indexing before recall; the portable plugin example uses
 the same skill. Raw sessions and fixture repositories remain local.
 
-Final development-checkout validation: **240 passed, 1 skipped in 350.41
-seconds** using the project Python with all live MCP checks enabled. The skip
+Final development-checkout validation: **241 passed, 1 skipped in 362.22
+seconds** using the project Python with all live MCP checks enabled, including
+the parametrized restart lifecycle test for Codex and Antigravity. The skip
 requires Windows directory-symlink permission. Package/CLI version metadata,
 portable plugin generation, canonical skill content, and ignore rules also
 passed their checks.

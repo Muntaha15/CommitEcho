@@ -244,7 +244,8 @@ def test_setup_command_launches_mcp_server(tmp_path: Path, client_id: str) -> No
     assert (tmp_path / ".git" / "commitecho" / "drafts.sqlite").exists()
 
 
-def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path) -> None:
+@pytest.mark.parametrize("client_id", ["codex", "antigravity"])
+def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path, client_id: str) -> None:
     """Capture a tested code change, commit it, and recall it through a new server."""
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -266,11 +267,11 @@ def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path) -> None:
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     subprocess.run(
-        [sys.executable, "-m", "commitecho", "setup", "--client", "codex",
+        [sys.executable, "-m", "commitecho", "setup", "--client", client_id,
          "--repo", str(tmp_path)],
         cwd=tmp_path, env=env, check=True, capture_output=True,
     )
-    profile = ALL_PROFILES["codex"]
+    profile = ALL_PROFILES[client_id]
     entry = _read_config(tmp_path / profile.mcp_config_path, profile)[
         profile.mcp_servers_key
     ]["commitecho"]
@@ -287,7 +288,7 @@ def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path) -> None:
                 await asyncio.wait_for(session.initialize(), timeout=10)
                 change = await call(
                     session, "begin_change", title="Preserve order when removing duplicates",
-                    client="codex", operation_id=str(uuid4()),
+                    client=client_id, operation_id=str(uuid4()),
                 )
                 change_id = change["change_id"]
                 recorded = await call(

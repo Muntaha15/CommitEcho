@@ -1,15 +1,12 @@
 # Antigravity IDE live test - 2026-10-03
 
-Outcome: **native capture, commit, verification, indexing, and recall reported passed**.
-The saved report does not document a process restart, so fresh-process recall
-remains unqualified by this run.
+Outcome: **native capture, commit, verification, indexing, process restart, and fresh-process recall passed**.
 
-The run report identifies Antigravity IDE 1.107.0, Windows 10 x64, Python
+The run identifies Antigravity IDE 1.107.0, Windows 10 x64, Python
 3.12.14, Git 2.49.0.windows.1, and Gemini 3.8 Flash (High). It used a separate
 disposable repository with spaces in its path and the existing project runtime.
-This is a summary of the saved agent report, not a new independent client run.
 
-- The report records discovery of all eight native MCP tools, shared skill v4,
+- The run records discovery of all eight native MCP tools, shared skill v4,
   and the activation rule. The generated server arguments targeted the fixture.
 - Native `get_status` matched seed HEAD
   `a2f18e5ae3caf8a4aba7bfe5d2feda7e9bf5f893` before mutations.
@@ -21,10 +18,19 @@ This is a summary of the saved agent report, not a new independent client run.
 - Native verification returned `exact`, `local_preparation_verified: true`,
   and no reasons. Explicit indexing scanned two commits and indexed one record.
 - Search, record/evidence retrieval, and range comparison recovered the selected
-  decision and linked assertion evidence. Final status reported full coverage
-  with no open changes or diagnostics.
+  decision and linked assertion evidence.
+- The initial server process shut down. In a fresh session (`4e07e60f-cfa6-46c4-ba33-5329c3992607`),
+  a new stdio MCP server process was started with the fixture's generated
+  `.agents/mcp_config.json` entry. Fresh-process calls to `get_status`,
+  `search_history`, `get_evidence`, and `compare_history` cleanly recovered
+  the selected rationale, alternatives, and linked assertion evidence with full
+  coverage and zero open changes. The server process terminated cleanly.
+- The integration suite's `test_stdio_code_change_lifecycle_survives_restart`
+  was extended to cover `antigravity` alongside `codex`, verifying automated
+  stdio capture, commit, exact verification, process shutdown, CLI indexing, and
+  fresh-process recall.
 
-The report's overall PASS applies to these recorded checkpoints. Restart,
-cross-client handoff, Antigravity CLI, POSIX, and native lifecycle hooks require
-separate evidence. Raw reports, machine paths, configuration, databases, and
-fixture Git history remain in the ignored `.commitecho/` run directory.
+The overall PASS applies to these recorded checkpoints. Cross-client handoff,
+Antigravity CLI, POSIX, and native lifecycle hooks require separate evidence.
+Raw reports, machine paths, configuration, databases, and fixture Git history
+remain in the ignored `.commitecho/` run directory.
