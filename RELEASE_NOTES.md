@@ -1,17 +1,48 @@
-# CommitEcho v0.1.0
+# CommitEcho release notes
 
-Initial release, 2026-10-01. The core implementation is complete. Live session
-checks are complete in Codex and Antigravity; Copilot in VS Code
-live acceptance remains pending.
+## v0.1.1 - in development
 
-## Included
+Package version: `0.1.1.dev0`. This work has not been released; v0.1.0 remains
+the published release. The portable plugin uses SemVer `0.1.1-dev.0`.
+
+The 2026-10-03 multi-client review repairs setup preservation, strict Git gate behavior, indexing deadlines,
+and plugin ownership; it does not extend those earlier sessions to revised
+discovery paths or native hooks. Four configuration profiles now include
+Claude Code. Revised qualification is tracked in [CAPABILITY_LEDGER.md](CAPABILITY_LEDGER.md)
+and findings/repairs in [MULTI_CLIENT_INTEGRATION_REVIEW.md](MULTI_CLIENT_INTEGRATION_REVIEW.md).
+Claude interactive/plugin validation and native event tests remain pending.
+The repaired full suite passed 238 tests in 341.08 seconds; one new directory-
+symlink test skipped because this Windows account lacks creation permission.
+All live MCP tests ran. No new dependency or storage migration was introduced.
+
+Later 2026-10-03 fixture runs add versioned evidence: interactive Codex CLI
+completed capture, exact verification, and fresh-process recall after explicit
+indexing; Antigravity IDE reported native capture and linked-evidence recall,
+without a documented process restart. See [Codex results](CODEX_LIVE_TEST.md)
+and [Antigravity results](ANTIGRAVITY_LIVE_TEST.md). The canonical skill is now
+version 4 and requires indexing before recall; the portable plugin example uses
+the same skill. Raw sessions and fixture repositories remain local.
+
+Final development-checkout validation: **240 passed, 1 skipped in 350.41
+seconds** using the project Python with all live MCP checks enabled. The skip
+requires Windows directory-symlink permission. Package/CLI version metadata,
+portable plugin generation, canonical skill content, and ignore rules also
+passed their checks.
+
+## v0.1.0 - 2026-10-01
+
+Initial release. The core implementation is complete. Live session checks are
+complete in Codex and Antigravity; Copilot in VS Code live acceptance remains
+pending. The following evidence describes that original release.
+
+### Included
 
 - Local stdio MCP server exposing eight capture, preparation, verification, and recall tools.
 - CLI, private SQLite drafts, portable committed JSON records, and rebuildable FTS5 index.
 - Git binding checks, revision-scoped retrieval, evidence provenance, and idempotent retries.
 - Setup profiles and shared instructions for Codex, Antigravity, and Copilot in VS Code.
 
-## Validation evidence
+### Validation evidence
 
 - Windows, Python 3.12.14, MCP SDK 2.2.0: 120 tests passed in 201.68 seconds
   in the release-preparation Codex chat. Tests include real stdio handshakes,
@@ -32,7 +63,7 @@ live acceptance remains pending.
 - Client application versions are not recorded. Separate Codex CLI qualification
   and Copilot live model-session acceptance remain pending.
 
-## Remaining qualification and limits
+### Remaining qualification and limits
 
 Complete the documented seven-step acceptance scenario in Copilot and retain
 versioned results for the Codex/Antigravity runs, including missed captures,

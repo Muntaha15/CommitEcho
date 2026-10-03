@@ -1,6 +1,6 @@
 ---
 name: commitecho
-version: 3
+version: 4
 description: Capture decisions made during coding tasks, recall rationale from Git history, and prepare verified commit records.
 ---
 
@@ -43,10 +43,12 @@ description: Capture decisions made during coding tasks, recall rationale from G
       CommitEcho-Record: <record_id>
       ```
    g. Call `verify_commit` with the resulting commit OID. Pass `keep_open=True` only if additional commits will follow for this change.
+   h. After successful verification, run `commitecho index --repo "<repository-root>"` using the same Python environment as the MCP server (`python -m commitecho index --repo "<repository-root>"`). Verification does not populate searchable history; index before restarting for recall.
 
 ## Recall workflow
 
 1. Call `search_history` with the user's question, file `path`, or revision scoping (`at_ref`, or `from_ref` and `to_ref`).
+   - If coverage notes report commits not yet indexed (for example after cloning, pulling, or committing), run `commitecho index --repo "<repository-root>"` in the same Python environment as the MCP server, then retry the query. Indexing is a CLI command, not an MCP tool. If shell access or indexing is unavailable, report incomplete coverage; do not treat an empty result as proof that rationale is unrecorded.
 2. Call `get_evidence` with the returned `evidence_id` or `record_id` to inspect full details and alternatives.
 3. Compose answers strictly from retrieved evidence and cite records. If history or rationale is missing from evidence, explicitly state that it is unrecorded rather than speculating.
 4. For range-based comparisons across commits/branches, call `compare_history`.

@@ -44,6 +44,10 @@ def _read_config(path: Path, profile):
     return tomlkit.parse(raw) if profile.config_format == "toml" else json.loads(raw)
 
 
+def _legacy_skill(version: int = 2) -> str:
+    return (Path(__file__).parents[1] / "fixtures" / f"skill-v{version}.md").read_text(encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Per-profile: fresh install
 # ---------------------------------------------------------------------------
@@ -195,11 +199,18 @@ def test_server_command_with_spaces_stored_as_single_element(tmp_path: Path) -> 
 def test_setup_command_launches_mcp_server(tmp_path: Path, client_id: str) -> None:
     """The generated command must complete a real stdio MCP handshake without PYTHONPATH."""
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Setup Test"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "setup@commitecho.test"], check=True)
+    (tmp_path / "target.txt").write_text(str(tmp_path), encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "target.txt"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "Identify target worktree"], check=True, capture_output=True)
+    expected_head = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
 
     subprocess.run(
-        [sys.executable, "-m", "commitecho", "setup", "--client", client_id, "--repo", str(tmp_path)],
+        [sys.executable, "-m", "commitecho", "setup", "--client", client_id, "--repo", str(tmp_path),
+         "--server-cmd", f'"{sys.executable}" -m commitecho serve'],
         check=True, capture_output=True, text=True, env=env, cwd=str(tmp_path),
     )
     profile = ALL_PROFILES[client_id]
@@ -223,10 +234,14 @@ def test_setup_command_launches_mcp_server(tmp_path: Path, client_id: str) -> No
 
     initialized, listed, status = asyncio.run(handshake())
     assert initialized.server_info.name == "commitecho"
-    assert {tool.name for tool in listed.tools} >= {
-        "begin_change", "prepare_commit", "verify_commit", "search_history",
+    assert {tool.name for tool in listed.tools} == {
+        "begin_change", "record_decisions", "prepare_commit", "verify_commit",
+        "search_history", "get_evidence", "compare_history", "get_status",
     }
     assert not status.is_error
+    status_data = json.loads(status.content[0].text)
+    assert status_data["head_oid"] == expected_head
+    assert (tmp_path / ".git" / "commitecho" / "drafts.sqlite").exists()
 
 
 def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path) -> None:
@@ -333,6 +348,173 @@ def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path) -> None:
     asyncio.run(lifecycle())
 
 
+@pytest.mark.parametrize("custom_content", [
+    _SKILL_TEMPLATE + "\n# Team rule\nKeep this custom instruction.\n",
+    "---\nname: commitecho\nversion: 0\n---\nCustom content.\n",
+])
+def test_generated_lookalike_skills_are_preserved(tmp_path: Path, custom_content: str) -> None:
+    profile = ALL_PROFILES["codex"]
+    installed = tmp_path / profile.skill_path
+    installed.parent.mkdir(parents=True)
+    installed.write_text(custom_content, encoding="utf-8")
+    legacy = tmp_path / ".agents/skills/commitecho.md"
+    legacy.write_text(_legacy_skill(), encoding="utf-8")
+
+    changes = _make_generator(tmp_path).generate(profile)
+    assert any("[conflict]" in change for change in changes)
+    assert installed.read_text(encoding="utf-8") == custom_content
+    assert legacy.read_text(encoding="utf-8") == _legacy_skill()
+
+
+def test_claude_setup_preserves_other_clients_legacy_skill(tmp_path: Path) -> None:
+    legacy = tmp_path / ".agents/skills/commitecho.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(_legacy_skill(), encoding="utf-8")
+    _make_generator(tmp_path).generate(ALL_PROFILES["claude_code"])
+    assert legacy.read_text(encoding="utf-8") == _legacy_skill()
+
+
+@pytest.mark.parametrize("invalid_config", [
+    [],
+    {"mcpServers": "commitecho"},
+    {"mcpServers": {"commitecho": "invalid"}},
+    {"mcpServers": {"commitecho": {"command": "", "args": []}}},
+    {"mcpServers": {"commitecho": {"command": "python", "args": "serve"}}},
+    {"mcpServers": {"commitecho": {"command": "python", "args": [42]}}},
+])
+def test_all_client_preflight_rejects_invalid_final_config_without_writes(tmp_path: Path, invalid_config) -> None:
+    from click.testing import CliRunner
+    from commitecho.transports.cli import setup
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    config_file = tmp_path / ".mcp.json"
+    original = json.dumps(invalid_config)
+    config_file.write_text(original, encoding="utf-8")
+    result = CliRunner().invoke(setup, ["--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "Invalid configuration" in result.output
+    assert config_file.read_text(encoding="utf-8") == original
+    assert not (tmp_path / ".codex").exists()
+    assert not (tmp_path / ".agents").exists()
+    assert not (tmp_path / ".git/commitecho").exists()
+
+
+def test_all_client_preflight_reads_final_assets_before_writes(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+    from commitecho.transports.cli import setup
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / "CLAUDE.md").mkdir()
+    result = CliRunner().invoke(setup, ["--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "CLAUDE.md" in result.output
+    assert not (tmp_path / ".codex").exists()
+
+
+def test_all_client_preflight_rejects_file_at_output_ancestor(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+    from commitecho.transports.cli import setup
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / ".claude").write_text("custom file", encoding="utf-8")
+    result = CliRunner().invoke(setup, ["--repo", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "must be a directory" in result.output
+    assert not (tmp_path / ".codex").exists()
+    assert not (tmp_path / ".agents").exists()
+    assert not (tmp_path / ".mcp.json").exists()
+    assert (tmp_path / ".claude").read_text(encoding="utf-8") == "custom file"
+
+
+def test_all_client_preflight_rejects_symlink_escaping_repository(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+    from commitecho.transports.cli import setup
+
+    worktree = tmp_path / "repository"
+    outside = tmp_path / "unrelated"
+    subprocess.run(["git", "init", str(worktree)], check=True, capture_output=True)
+    outside.mkdir()
+    try:
+        (worktree / ".claude").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("Creating a directory symlink requires permission on this Windows installation")
+    result = CliRunner().invoke(setup, ["--repo", str(worktree)])
+    assert result.exit_code == 1
+    assert "outside the repository" in result.output
+    assert not (worktree / ".codex").exists()
+    assert not list(outside.iterdir())
+
+
+@pytest.mark.parametrize("command", ["", "   ", '"unterminated', '"" -m commitecho'])
+def test_cli_rejects_invalid_commands_without_writes(tmp_path: Path, command: str) -> None:
+    from click.testing import CliRunner
+    from commitecho.transports.cli import setup
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    result = CliRunner().invoke(setup, ["--repo", str(tmp_path), "--server-cmd", command])
+    assert result.exit_code == 1
+    assert "Invalid --server-cmd" in result.output
+    assert not (tmp_path / ".codex").exists()
+
+
+def test_windows_command_parser_preserves_spaced_paths_and_rejects_mixed_quotes() -> None:
+    import click
+    from commitecho.transports.cli import _parse_server_command
+
+    command = '"C:\\Program Files\\Python312\\python.exe" -m commitecho serve'
+    assert _parse_server_command(command, windows=True) == [
+        r"C:\Program Files\Python312\python.exe", "-m", "commitecho", "serve",
+    ]
+    assert _parse_server_command('python "O\'Neil"', windows=True) == ["python", "O'Neil"]
+    with pytest.raises(click.ClickException, match="quote each whole argument"):
+        _parse_server_command('python --flag="mixed quoting"', windows=True)
+
+
+def test_regeneration_preserves_toml_comments_and_overrides(tmp_path: Path) -> None:
+    profile = ALL_PROFILES["codex"]
+    config_file = tmp_path / profile.mcp_config_path
+    config_file.parent.mkdir()
+    original = (
+        '[mcp_servers.commitecho]\n# custom launch\ncommand = "launcher" # command comment\n'
+        'args = ["--custom"]\n# env comment\nenv = {USER_SETTING = "42"}\n'
+    )
+    config_file.write_text(original, encoding="utf-8")
+    _make_generator(tmp_path).generate(profile)
+    assert config_file.read_text(encoding="utf-8") == original
+    generator = SetupGenerator(tmp_path, [sys.executable, "-m", "commitecho", "serve"], regenerate_server=True)
+    changes = generator.generate(profile, dry_run=True)
+    assert any("launcher" in change and "--custom" in change for change in changes)
+    assert config_file.read_text(encoding="utf-8") == original
+    generator.generate(profile)
+    content = config_file.read_text(encoding="utf-8")
+    for comment in ("# custom launch", "# command comment", "# env comment"):
+        assert comment in content
+    assert _read_config(config_file, profile)["mcp_servers"]["commitecho"]["env"] == {"USER_SETTING": "42"}
+
+
+def test_portable_setup_requires_documented_root_contract(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="only for claude_code"):
+        SetupGenerator(tmp_path, ["commitecho", "serve"], portable=True).preflight(list(ALL_PROFILES.values()))
+    assert not list(tmp_path.iterdir())
+
+
+def test_doctor_uses_same_repository_resolution_and_detects_invalid_structures(tmp_path: Path, monkeypatch) -> None:
+    from click.testing import CliRunner
+    from commitecho.transports.cli import doctor
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    monkeypatch.setenv("COMMITECHO_REPO", str(tmp_path))
+    (tmp_path / ".mcp.json").write_text('{"mcpServers": "commitecho"}', encoding="utf-8")
+    result = CliRunner().invoke(doctor)
+    assert result.exit_code == 1
+    assert f"worktree={tmp_path}" in result.output
+    assert "must be a mapping/table" in result.output
+    assert "[ok] Claude Code: commitecho entry present" not in result.output
+    # Closed diagnostic connections permit removal on Windows without relying on GC.
+    (tmp_path / ".git/commitecho/drafts.sqlite").unlink()
+    (tmp_path / ".git/commitecho/index.sqlite").unlink()
+
+
 def test_malformed_codex_config_is_unchanged(tmp_path: Path) -> None:
     profile = ALL_PROFILES["codex"]
     config_file = tmp_path / profile.mcp_config_path
@@ -351,7 +533,7 @@ def test_malformed_antigravity_config_is_unchanged(tmp_path: Path) -> None:
     config_file.parent.mkdir(parents=True)
     config_file.write_text("{broken", encoding="utf-8")
 
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(ValueError, match=".agents/mcp_config.json"):
         _make_generator(tmp_path).generate(profile)
 
     assert config_file.read_text(encoding="utf-8") == "{broken"
@@ -517,12 +699,13 @@ def test_skill_template_contains_version_header() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_stale_skill_triggers_update(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", [2, 3])
+def test_stale_skill_triggers_update(tmp_path: Path, version: int) -> None:
     """If the installed skill differs from the canonical template, generate must [update] it."""
     profile = ALL_PROFILES["codex"]
     skill_file = tmp_path / profile.skill_path
     skill_file.parent.mkdir(parents=True, exist_ok=True)
-    skill_file.write_text("---\nname: commitecho\nversion: 0\n---\nOld content.\n", encoding="utf-8")
+    skill_file.write_text(_legacy_skill(version), encoding="utf-8")
 
     gen = _make_generator(tmp_path)
     changes = gen.generate(profile, dry_run=False)
@@ -537,10 +720,10 @@ def test_stale_skill_triggers_update(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_skill_version_3_and_neutral_guidance() -> None:
-    """Skill must be version 3 with neutral client identification and explicit boundaries."""
-    assert SKILL_VERSION == 3
-    assert 'version: 3' in _SKILL_TEMPLATE
+def test_skill_version_4_and_neutral_guidance() -> None:
+    """Skill must be version 4 with neutral client identification and explicit boundaries."""
+    assert SKILL_VERSION == 4
+    assert 'version: 4' in _SKILL_TEMPLATE
     # No hardcoded antigravity default in client parameter or begin_change call
     assert 'client="antigravity" (or' not in _SKILL_TEMPLATE
     assert 'client="antigravity",' not in _SKILL_TEMPLATE
@@ -568,12 +751,7 @@ def test_legacy_skill_migration_and_custom_preservation(tmp_path: Path) -> None:
     legacy_file = tmp_path / ".codex" / "skills" / "commitecho.md"
     legacy_file.parent.mkdir(parents=True, exist_ok=True)
     # Write a known v2 generated skill
-    v2_content = (
-        "---\nname: commitecho\nversion: 2\n"
-        "description: Capture decisions made during coding tasks and recall them from Git history.\n---\n\n"
-        "# CommitEcho capture and recall workflow\n\n"
-        "## When to activate\n\n## Capture workflow\n"
-    )
+    v2_content = _legacy_skill()
     legacy_file.write_text(v2_content, encoding="utf-8")
 
     profile = ALL_PROFILES["codex"]
@@ -587,7 +765,7 @@ def test_legacy_skill_migration_and_custom_preservation(tmp_path: Path) -> None:
     # Now test custom legacy file preservation
     custom_legacy = tmp_path / ".agents" / "skills" / "commitecho.md"
     custom_legacy.parent.mkdir(parents=True, exist_ok=True)
-    custom_legacy.write_text("# Custom skill instructions for my team\n", encoding="utf-8")
+    custom_legacy.write_text(_legacy_skill() + "\n# Custom skill instructions for my team\n", encoding="utf-8")
 
     gen2 = _make_generator(tmp_path)
     changes2 = gen2.generate(profile, dry_run=False)
@@ -601,7 +779,7 @@ def test_custom_installed_skill_preserved_with_conflict(tmp_path: Path) -> None:
     profile = ALL_PROFILES["antigravity"]
     skill_file = tmp_path / profile.skill_path
     skill_file.parent.mkdir(parents=True, exist_ok=True)
-    custom_text = "---\nname: commitecho\nversion: 3\n---\n# Custom team decisions\nDo not overwrite.\n"
+    custom_text = _legacy_skill(3) + "\n# Custom team decisions\nDo not overwrite.\n"
     skill_file.write_text(custom_text, encoding="utf-8")
 
     gen = _make_generator(tmp_path)
@@ -630,10 +808,16 @@ def test_mcp_entry_preserves_custom_user_fields(tmp_path: Path) -> None:
     gen = _make_generator(tmp_path)
     changes = gen.generate(profile, dry_run=False)
 
-    assert any("[update]" in c and profile.mcp_config_path in c for c in changes)
+    assert any("[skip]" in c and profile.mcp_config_path in c for c in changes)
     updated = json.loads(config_file.read_text(encoding="utf-8"))
     entry = updated["mcpServers"]["commitecho"]
     assert entry["env"] == {"MY_CUSTOM_VAR": "42"}, "Custom user 'env' field was not preserved"
+    assert entry["command"] == "old-python"
+    gen = SetupGenerator(tmp_path, [sys.executable, "-m", "commitecho", "serve"], regenerate_server=True)
+    changes = gen.generate(profile)
+    assert any("[update]" in c and profile.mcp_config_path in c for c in changes)
+    entry = json.loads(config_file.read_text(encoding="utf-8"))["mcpServers"]["commitecho"]
+    assert entry["env"] == {"MY_CUSTOM_VAR": "42"}
     assert entry["command"] == sys.executable
 
 
@@ -689,6 +873,13 @@ def test_repo_resolution_precedence(tmp_path: Path, monkeypatch) -> None:
     adapter = _resolve_repo(str(repo1))
     assert Path(adapter.repo_info.worktree_dir).resolve() == repo1.resolve()
 
+    monkeypatch.chdir(repo1)
+    adapter = _resolve_repo(".")
+    assert Path(adapter.repo_info.worktree_dir).resolve() == repo1.resolve()
+    with pytest.raises(Exception, match="does not exist"):
+        _resolve_repo(str(tmp_path / "invalid-explicit"))
+    assert not (repo2 / ".git" / "commitecho").exists()
+
     # 2. COMMITECHO_REPO wins when --repo is omitted
     adapter = _resolve_repo(None)
     assert Path(adapter.repo_info.worktree_dir).resolve() == repo2.resolve()
@@ -703,11 +894,15 @@ def test_repo_resolution_precedence(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(repo1)
     adapter = _resolve_repo(None)
     assert Path(adapter.repo_info.worktree_dir).resolve() == repo1.resolve()
+    subdirectory = repo1 / "nested"
+    subdirectory.mkdir()
+    monkeypatch.chdir(subdirectory)
+    assert Path(_resolve_repo(None).repo_info.worktree_dir).resolve() == repo1.resolve()
 
 
 def test_portable_server_command(tmp_path: Path) -> None:
     """Portable mode must use 'commitecho serve' without --repo."""
-    profile = ALL_PROFILES["codex"]
+    profile = ALL_PROFILES["claude_code"]
     gen = SetupGenerator(tmp_path, ["commitecho", "serve"], portable=True)
     gen.generate(profile, dry_run=False)
 
@@ -782,12 +977,16 @@ def test_claude_code_lifecycle_with_project_dir_env(tmp_path: Path) -> None:
 
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
+    env.pop("COMMITECHO_REPO", None)
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
 
-    # Launch server with python -m commitecho serve (no --repo argument)
+    # Exercise the actual generated command with the documented project-root fallback.
+    profile = ALL_PROFILES["claude_code"]
+    SetupGenerator(tmp_path, [sys.executable, "-m", "commitecho", "serve"], portable=True).generate(profile)
+    entry = _read_config(tmp_path / profile.mcp_config_path, profile)[profile.mcp_servers_key]["commitecho"]
     params = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "commitecho", "serve"],
+        command=entry["command"],
+        args=entry["args"],
         env=env,
     )
 

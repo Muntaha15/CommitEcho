@@ -1,7 +1,7 @@
 ---
 name: commitecho
-version: 4
-description: Capture decisions made during coding tasks, recall rationale from Git history, and prepare verified commit records.
+version: 2
+description: Capture decisions made during coding tasks and recall them from Git history.
 ---
 
 # CommitEcho capture and recall workflow
@@ -9,19 +9,17 @@ description: Capture decisions made during coding tasks, recall rationale from G
 ## When to activate
 - You begin or resume a task involving meaningful code or design work.
 - You need to explain why committed code exists or how decisions evolved.
-- If CommitEcho MCP tools are unavailable in your environment, report this to the user rather than inventing successful capture.
 
 ## Core concepts and parameters
 - **Mutating operations** (`begin_change`, `record_decisions`, `prepare_commit`) require a caller-generated `operation_id`. Use a new UUID for each distinct operation. Reuse the identical `operation_id` only when retrying an identical payload after a transport failure.
-- **Client identification**: Pass your active client ID in `client` (`"codex"`, `"antigravity"`, `"copilot_vscode"`, or `"claude_code"`). Record actual surface and version separately in `client_version` and `native_session_id`.
+- **Client identification**: Pass `client="antigravity"` (or `"codex"`, `"copilot_vscode"`). Record actual surface and version separately in `client_version` and `native_session_id`.
 - **Revision tracking**: `expected_revision` must strictly match the server's current `revision_counter` (initially returned by `begin_change` as 0, updated by each successful `record_decisions`).
 - **Provenance and evidence**: Any agent-authored summary must specify `origin="agent_reported"`. Never invent unstated alternatives or claim developer confirmation (`developer_confirmed`, `developer_attestation`, and `independent_artifact` origins are rejected at the MCP boundary).
-- **Authorization**: Installing or loading this skill does not imply permission to make Git commits; follow normal project authorization.
 
 ## Capture workflow
 
 1. **Open or resume change**:
-   - Call `begin_change` with `title`, `client` set to your active agent identifier (`"codex"`, `"antigravity"`, `"copilot_vscode"`, or `"claude_code"`), and a new UUID `operation_id`.
+   - Call `begin_change` with `title`, `client="antigravity"`, and a new UUID `operation_id`.
    - Save the returned `change_id`, `session_id`, and `revision_counter`.
 
 2. **Record decisions and alternatives**:
@@ -43,12 +41,10 @@ description: Capture decisions made during coding tasks, recall rationale from G
       CommitEcho-Record: <record_id>
       ```
    g. Call `verify_commit` with the resulting commit OID. Pass `keep_open=True` only if additional commits will follow for this change.
-   h. After successful verification, run `commitecho index --repo "<repository-root>"` using the same Python environment as the MCP server (`python -m commitecho index --repo "<repository-root>"`). Verification does not populate searchable history; index before restarting for recall.
 
 ## Recall workflow
 
 1. Call `search_history` with the user's question, file `path`, or revision scoping (`at_ref`, or `from_ref` and `to_ref`).
-   - If coverage notes report commits not yet indexed (for example after cloning, pulling, or committing), run `commitecho index --repo "<repository-root>"` in the same Python environment as the MCP server, then retry the query. Indexing is a CLI command, not an MCP tool. If shell access or indexing is unavailable, report incomplete coverage; do not treat an empty result as proof that rationale is unrecorded.
 2. Call `get_evidence` with the returned `evidence_id` or `record_id` to inspect full details and alternatives.
 3. Compose answers strictly from retrieved evidence and cite records. If history or rationale is missing from evidence, explicitly state that it is unrecorded rather than speculating.
 4. For range-based comparisons across commits/branches, call `compare_history`.

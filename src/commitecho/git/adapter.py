@@ -163,9 +163,9 @@ def read_staged_changes(repo_info: RepoInfo) -> list[StagedEntry]:
     if head_oid is None:
         # Root commit: diff against this repository's empty tree.
         # ``--root`` is not accepted as a tree-ish by diff-index.
-        args = ["diff-index", "--cached", "--raw", "-z", _empty_tree_oid(repo_info)]
+        args = ["diff-index", "--cached", "--no-renames", "--raw", "-z", _empty_tree_oid(repo_info)]
     else:
-        args = ["diff-index", "--cached", "--raw", "-z", "HEAD"]
+        args = ["diff-index", "--cached", "--no-renames", "--raw", "-z", "HEAD"]
 
     raw = _run(args, cwd=repo_info.worktree_dir)
 
@@ -246,7 +246,7 @@ def fingerprint_manifest(manifest: dict) -> str:
 def parse_trailers(message: str, cwd: str | None = None) -> dict[str, list[str]]:
     """Parse Git trailers from a message string using git interpret-trailers --parse."""
     result = subprocess.run(
-        [_git_exe(), "interpret-trailers", "--parse"],
+        [_git_exe(), "interpret-trailers", "--parse", "--no-divider"],
         input=message,
         capture_output=True,
         text=True,
@@ -327,51 +327,34 @@ class GitAdapter:
         return res.stdout
 
     def get_hook_path(self, hook_name: str) -> tuple[Path, bool]:
-        """Locate the effective hook path for *hook_name*.
-
-        Returns (hook_path, is_local_repo).
-        is_local_repo is False if core.hooksPath resolves to a global or system location.
-        """
-        try:
-            res = subprocess.run(
-                [_git_exe(), "config", "--show-origin", "--get", "core.hooksPath"],
-                cwd=self._info.worktree_dir,
-                capture_output=True,
-                text=True,
-            )
-            if res.returncode == 0 and res.stdout.strip():
-                origin, _, val = res.stdout.strip().partition("\t")
-                val = val.strip()
-                hooks_dir = Path(val)
-                wt = Path(self._info.worktree_dir).resolve()
-                cd = Path(self._info.common_dir).resolve()
-
-                if not hooks_dir.is_absolute():
-                    hooks_dir = (wt / hooks_dir).resolve()
-                else:
-                    hooks_dir = hooks_dir.resolve()
-
-                origin_file = origin.removeprefix("file:").strip()
-                origin_path = Path(origin_file)
-                if not origin_path.is_absolute():
-                    origin_path = (wt / origin_path).resolve()
-                else:
-                    origin_path = origin_path.resolve()
-
-                is_local = False
-                try:
-                    is_config_local = origin_path.is_relative_to(cd) or origin_path.is_relative_to(wt)
-                    is_target_local = hooks_dir.is_relative_to(cd) or hooks_dir.is_relative_to(wt)
-                    is_local = is_config_local and is_target_local
-                except (ValueError, AttributeError):
-                    pass
-
-                return hooks_dir / hook_name, is_local
-        except Exception:
-            pass
-
-        default_dir = (Path(self._info.common_dir) / "hooks").resolve()
-        return default_dir / hook_name, True
+        """Locate Git's effective hook, allowing only repository-local ownership."""
+        wt = Path(self._info.worktree_dir).resolve()
+        cd = Path(self._info.common_dir).resolve()
+        raw_path = _run(["rev-parse", "--git-path", f"hooks/{hook_name}"], cwd=str(wt))
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = wt / path
+        # Resolve parents for locality, retaining the final symlink for the caller.
+        hook_path = path.parent.resolve() / path.name
+        target = hook_path.resolve()
+        target_local = target.is_relative_to(wt) or target.is_relative_to(cd)
+        result = subprocess.run(
+            [_git_exe(), "config", "--show-origin", "--get", "core.hooksPath"],
+            cwd=str(wt), capture_output=True, text=True,
+        )
+        if result.returncode == 1:
+            return hook_path, target_local
+        if result.returncode != 0:
+            raise GitError(f"Cannot inspect core.hooksPath: {result.stderr.strip()}")
+        origin, separator, _ = result.stdout.strip().partition("\t")
+        if not separator or not origin.startswith("file:"):
+            return hook_path, False
+        origin_path = Path(origin.removeprefix("file:"))
+        if not origin_path.is_absolute():
+            origin_path = wt / origin_path
+        origin_path = origin_path.resolve()
+        config_local = origin_path.is_relative_to(wt) or origin_path.is_relative_to(cd)
+        return hook_path, target_local and config_local
 
     def file_exists_in_commit(self, oid: str, path: str) -> bool:
         """Check whether *path* exists in the tree of commit *oid*."""
@@ -408,7 +391,7 @@ class GitAdapter:
         base = parents[1] if len(parents) > 1 else _empty_tree_oid(self._info)
         # -r recurses into subtrees so we get blob-level entries, matching
         # what diff-index --cached produces for staged changes.
-        args = ["diff-tree", "--raw", "-r", "-z", base, commit_oid]
+        args = ["diff-tree", "--no-renames", "--raw", "-r", "-z", base, commit_oid]
 
         raw = _run(args, cwd=self._info.worktree_dir)
 

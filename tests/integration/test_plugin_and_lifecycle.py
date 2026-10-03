@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import os
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
-from commitecho.transports.cli import hook, main, plugin, rebuild_index
+from commitecho.transports.cli import hook, plugin, rebuild_index
 
 
 def _git_available() -> bool:
@@ -42,6 +46,32 @@ def test_repo(tmp_path: Path):
 
 
 class TestBoundedIndex:
+    @pytest.mark.parametrize("seconds", ["0", "-1", "nan", "inf", "-inf"])
+    def test_invalid_timeout_writes_nothing(self, tmp_path, seconds):
+        res = CliRunner().invoke(rebuild_index, ["--repo", str(tmp_path), "--timeout", seconds])
+        assert res.exit_code == 2
+        assert "finite positive" in res.output
+        assert not (tmp_path / ".git").exists()
+
+    def test_timeout_covers_worker_before_git_discovery(self, tmp_path, monkeypatch):
+        import commitecho.transports.cli as cli
+        original = subprocess.run
+        def slow_worker(command, **kwargs):
+            assert command[:4] == [sys.executable, "-m", "commitecho", "index"]
+            assert "--timeout" not in command
+            return original([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+        monkeypatch.setattr(cli.subprocess, "run", slow_worker)
+        started = time.monotonic()
+        res = CliRunner().invoke(rebuild_index, ["--repo", str(tmp_path), "--timeout", "0.1"])
+        assert res.exit_code == 0
+        assert "coverage may be incomplete" in res.output
+        assert time.monotonic() - started < 3
+
+    def test_worker_reports_invalid_repo(self, tmp_path):
+        res = CliRunner().invoke(rebuild_index, ["--repo", str(tmp_path / "missing"), "--timeout", "10"])
+        assert res.exit_code != 0
+        assert "Error:" in res.output
+
     def test_index_quiet(self, test_repo):
         runner = CliRunner()
         res = runner.invoke(rebuild_index, ["--repo", str(test_repo), "--quiet"])
@@ -58,99 +88,139 @@ class TestBoundedIndex:
 
 
 class TestClaudeCodeSessionHook:
-    def test_install_claude_hook(self, test_repo):
-        runner = CliRunner()
-        res = runner.invoke(hook, ["install", "--client", "claude_code", "--repo", str(test_repo)])
-        assert res.exit_code == 0
-        assert "[add]" in res.output
-
+    @pytest.mark.parametrize("flags", [[], ["--dry-run"], ["--git"]])
+    def test_unqualified_install_preserves_everything(self, test_repo, flags):
         settings_file = test_repo / ".claude" / "settings.json"
-        assert settings_file.exists()
-        data = json.loads(settings_file.read_text(encoding="utf-8"))
-        assert "hooks" in data
-        assert "SessionStart" in data["hooks"]
-        assert len(data["hooks"]["SessionStart"]) == 1
-        entry = data["hooks"]["SessionStart"][0]
-        assert entry["matcher"] == "startup|resume"
-        sub = entry["hooks"][0]
-        assert "commitecho" in (sub["command"] + " " + " ".join(sub["args"]))
+        settings_file.parent.mkdir()
+        settings_file.write_text('{"model": "custom"}', encoding="utf-8")
+        before = settings_file.read_bytes()
+        res = CliRunner().invoke(hook, ["install", "--client", "claude_code", "--repo", str(test_repo), *flags])
+        assert res.exit_code != 0
+        assert "not qualified" in res.output
+        assert "commitecho index --timeout 5" in res.output
+        assert settings_file.read_bytes() == before
+        assert not (test_repo / ".git" / "hooks" / "commit-msg").exists()
 
-    def test_install_claude_hook_idempotent(self, test_repo):
-        runner = CliRunner()
-        runner.invoke(hook, ["install", "--client", "claude_code", "--repo", str(test_repo)])
-        res = runner.invoke(hook, ["install", "--client", "claude_code", "--repo", str(test_repo)])
-        assert res.exit_code == 0
-        assert "[skip]" in res.output
-        assert "already up to date" in res.output
-
-    def test_install_claude_hook_update_timeout(self, test_repo):
-        runner = CliRunner()
-        runner.invoke(hook, ["install", "--client", "claude_code", "--repo", str(test_repo), "--timeout", "5.0"])
-        res = runner.invoke(hook, ["install", "--client", "claude_code", "--repo", str(test_repo), "--timeout", "10.0"])
-        assert res.exit_code == 0
-        assert "[update]" in res.output
-
+    @pytest.mark.parametrize("portable", [False, True])
+    def test_uninstall_only_generated_handlers(self, test_repo, portable):
         settings_file = test_repo / ".claude" / "settings.json"
-        data = json.loads(settings_file.read_text(encoding="utf-8"))
-        sub = data["hooks"]["SessionStart"][0]["hooks"][0]
-        assert "10.0" in sub["args"]
-
-    def test_install_claude_hook_preserves_foreign_settings(self, test_repo):
-        settings_file = test_repo / ".claude" / "settings.json"
-        settings_file.parent.mkdir(parents=True, exist_ok=True)
-        initial = {
-            "model": "claude-3-5-sonnet",
-            "hooks": {
-                "UserPrompt": [{"matcher": ".*", "hooks": [{"type": "command", "command": "echo"}]}]
-            }
+        settings_file.parent.mkdir()
+        generated = {
+            "type": "command", "command": "commitecho" if portable else Path(sys.executable).as_posix(),
+            "args": ([] if portable else ["-m", "commitecho"]) + ["index", "--timeout", "5.0", "--quiet"],
         }
-        settings_file.write_text(json.dumps(initial, indent=2), encoding="utf-8")
-
-        runner = CliRunner()
-        res = runner.invoke(hook, ["install", "--client", "claude_code", "--repo", str(test_repo)])
-        assert res.exit_code == 0
-
-        data = json.loads(settings_file.read_text(encoding="utf-8"))
-        assert data["model"] == "claude-3-5-sonnet"
-        assert "UserPrompt" in data["hooks"]
-        assert "SessionStart" in data["hooks"]
-
-    def test_install_claude_hook_dry_run(self, test_repo):
-        runner = CliRunner()
-        res = runner.invoke(hook, ["install", "--client", "claude_code", "--dry-run", "--repo", str(test_repo)])
-        assert res.exit_code == 0
-        assert "(dry-run: no files were written)" in res.output
-        assert not (test_repo / ".claude" / "settings.json").exists()
-
-    def test_uninstall_claude_hook_empty_removes_file(self, test_repo):
-        runner = CliRunner()
-        runner.invoke(hook, ["install", "--client", "claude_code", "--repo", str(test_repo)])
-        settings_file = test_repo / ".claude" / "settings.json"
-        assert settings_file.exists()
-
-        res = runner.invoke(hook, ["uninstall", "--client", "claude_code", "--repo", str(test_repo)])
-        assert res.exit_code == 0
-        assert "[remove]" in res.output
-        assert not settings_file.exists()
-
-    def test_uninstall_claude_hook_preserves_other_settings(self, test_repo):
-        settings_file = test_repo / ".claude" / "settings.json"
-        settings_file.parent.mkdir(parents=True, exist_ok=True)
-        initial = {"model": "claude-3-opus"}
+        foreign = {"type": "command", "command": "echo commitecho-status"}
+        customized = {**generated, "timeout": 12}
+        initial = {"model": "custom", "hooks": {"SessionStart": [
+            {"matcher": "startup|resume", "hooks": [generated, foreign, customized]},
+            {"matcher": "startup", "hooks": None},
+            {"matcher": "custom", "hooks": [generated], "description": "retain this metadata"},
+        ]}}
         settings_file.write_text(json.dumps(initial), encoding="utf-8")
-
         runner = CliRunner()
-        runner.invoke(hook, ["install", "--client", "claude_code", "--repo", str(test_repo)])
-        res = runner.invoke(hook, ["uninstall", "--client", "claude_code", "--repo", str(test_repo)])
-        assert res.exit_code == 0
-        assert "[update]" in res.output
-        assert settings_file.exists()
-        data = json.loads(settings_file.read_text(encoding="utf-8"))
-        assert data == {"model": "claude-3-opus"}
+        command = ["uninstall", "--client", "claude_code", "--repo", str(test_repo)]
+        before = settings_file.read_bytes()
+        dry = runner.invoke(hook, command + ["--dry-run"])
+        assert dry.exit_code == 0
+        assert settings_file.read_bytes() == before
+        result = runner.invoke(hook, command)
+        assert result.exit_code == 0, result.output
+        initial["hooks"]["SessionStart"][0]["hooks"] = [foreign, customized]
+        initial["hooks"]["SessionStart"][2]["hooks"] = []
+        assert json.loads(settings_file.read_text()) == initial
+        retained = settings_file.read_bytes()
+        repeated = runner.invoke(hook, command)
+        assert repeated.exit_code == 0
+        assert settings_file.read_bytes() == retained
 
 
 class TestPluginGenerator:
-    def test_generate_default_plugin(self, test_repo):
+    @pytest.mark.parametrize("asset", [".claude-plugin/plugin.json", ".mcp.json", "skills/commitecho/SKILL.md"])
+    def test_custom_asset_preflight_preserves_all_files(self, test_repo, asset):
+        runner = CliRunner()
+        assert runner.invoke(plugin, ["--repo", str(test_repo)]).exit_code == 0
+        out = test_repo / "commitecho-plugin"
+        (out / asset).write_text("customized content", encoding="utf-8")
+        # A missing earlier asset must not be written before discovering a later conflict.
+        if asset == "skills/commitecho/SKILL.md":
+            (out / ".mcp.json").unlink()
+        before = {str(p.relative_to(out)): p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        res = runner.invoke(plugin, ["--repo", str(test_repo), "--portable"])
+        assert res.exit_code != 0
+        after = {str(p.relative_to(out)): p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        assert after == before
+
+    def test_foreign_plugin_manifest_is_preserved(self, test_repo):
+        out = test_repo / "commitecho-plugin"
+        (out / ".claude-plugin").mkdir(parents=True)
+        manifest = out / ".claude-plugin" / "plugin.json"
+        manifest.write_text('{"name":"foreign-plugin"}', encoding="utf-8")
+        res = CliRunner().invoke(plugin, ["--repo", str(test_repo)])
+        assert res.exit_code != 0
+        assert manifest.read_text() == '{"name":"foreign-plugin"}'
+        assert not (out / ".mcp.json").exists()
+
+    def test_invalid_asset_parent_preflight_writes_nothing(self, test_repo):
+        runner = CliRunner()
+        assert runner.invoke(plugin, ["--repo", str(test_repo)]).exit_code == 0
+        out = test_repo / "commitecho-plugin"
+        skill_dir = out / "skills" / "commitecho"
+        (skill_dir / "SKILL.md").unlink()
+        skill_dir.rmdir()
+        skill_dir.write_text("custom file", encoding="utf-8")
+        (out / ".mcp.json").unlink()
+        res = runner.invoke(plugin, ["--repo", str(test_repo)])
+        assert res.exit_code != 0
+        assert "Expected a directory" in res.output
+        assert not (out / ".mcp.json").exists()
+        assert skill_dir.read_text() == "custom file"
+
+    def test_regeneration_is_idempotent_and_skill_is_canonical(self, test_repo):
+        from commitecho.integrations.profiles import SKILL_TEMPLATE
+        runner = CliRunner()
+        args = ["--repo", str(test_repo)]
+        assert runner.invoke(plugin, args).exit_code == 0
+        repeated = runner.invoke(plugin, args)
+        assert repeated.exit_code == 0
+        assert repeated.output.count("[skip]") == 3
+        assert (test_repo / "commitecho-plugin" / "skills" / "commitecho" / "SKILL.md").read_text(encoding="utf-8") == SKILL_TEMPLATE
+
+    @pytest.mark.parametrize("portable", [False, True])
+    def test_generated_plugin_mcp_launch_from_unrelated_cwd(self, test_repo, tmp_path, portable, monkeypatch):
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+        from commitecho.git.adapter import GitAdapter
+        result = CliRunner().invoke(plugin, ["--repo", str(test_repo), *(["--portable"] if portable else [])])
+        assert result.exit_code == 0, result.output
+        entry = json.loads((test_repo / "commitecho-plugin" / ".mcp.json").read_text())["mcpServers"]["commitecho"]
+        unrelated = tmp_path / "unrelated cwd"
+        unrelated.mkdir()
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+        env.pop("COMMITECHO_REPO", None)
+        env["CLAUDE_PROJECT_DIR"] = str(test_repo)
+        env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+        monkeypatch.setenv("PATH", env["PATH"])
+        params = StdioServerParameters(command=entry["command"], args=entry["args"], env=env, cwd=str(unrelated))
+        async def handshake():
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await asyncio.wait_for(session.initialize(), timeout=10)
+                    tools = await asyncio.wait_for(session.list_tools(), timeout=10)
+                    status = await asyncio.wait_for(session.call_tool("get_status", {}), timeout=10)
+                    assert not status.is_error
+                    return {tool.name for tool in tools.tools}, json.loads(status.content[0].text)
+        tools, status = asyncio.run(handshake())
+        assert tools == {"begin_change", "record_decisions", "prepare_commit", "verify_commit", "search_history", "get_evidence", "compare_history", "get_status"}
+        assert status["worktree"] == GitAdapter.from_path(test_repo).repo_info.worktree_id
+        assert not (unrelated / ".commitecho").exists()
+
+    @pytest.mark.parametrize("package_version,plugin_version", [
+        ("0.1.0", "0.1.0"),
+        ("0.1.1.dev0", "0.1.1-dev.0"),
+    ])
+    def test_generate_default_plugin(self, test_repo, monkeypatch, package_version, plugin_version):
+        monkeypatch.setattr("importlib.metadata.version", lambda name: package_version)
         runner = CliRunner()
         res = runner.invoke(plugin, ["--repo", str(test_repo)])
         assert res.exit_code == 0
@@ -167,7 +237,7 @@ class TestPluginGenerator:
 
         data = json.loads(manifest.read_text(encoding="utf-8"))
         assert data["name"] == "commitecho"
-        assert "version" in data
+        assert data["version"] == plugin_version
 
     def test_generate_plugin_custom_output_dir(self, test_repo, tmp_path):
         custom_out = tmp_path / "my-custom-plugin"

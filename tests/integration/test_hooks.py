@@ -66,7 +66,7 @@ def _create_staged_record(repo: Path, record_uuid: uuid.UUID | None = None, pare
         "record_id": str(record_uuid),
         "change_id": str(uuid.uuid4()),
         "summary": "Test commit record",
-        "prepared_at": "2026-10-02T12:00:00Z",
+        "created_at": "2026-10-02T12:00:00Z",
         "prepared_for": {
             "parent_oid": parent_oid,
             "object_format": git.repo_info.object_format,
@@ -92,15 +92,15 @@ class TestCheckMessage:
         assert res.exit_code == 0
         assert f"CommitEcho record {record_uuid} verified" in res.output
 
-    def test_case_insensitive_trailer_key(self, test_repo):
+    def test_noncanonical_trailer_key_rejected(self, test_repo):
         record_uuid, _, _ = _create_staged_record(test_repo)
         msg_file = test_repo / ".git" / "COMMIT_EDITMSG"
         msg_file.write_text(f"feat: add hello\n\ncommitecho-record: {record_uuid}\n", encoding="utf-8")
 
         runner = CliRunner()
         res = runner.invoke(check_message, [str(msg_file), "--repo", str(test_repo), "--strict"])
-        assert res.exit_code == 0
-        assert f"CommitEcho record {record_uuid} verified" in res.output
+        assert res.exit_code == 1
+        assert "Trailer key must be exactly" in res.output
 
     def test_missing_trailer_with_staged_code_advisory(self, test_repo):
         (test_repo / "foo.txt").write_text("bar\n", encoding="utf-8")
@@ -126,15 +126,22 @@ class TestCheckMessage:
         assert "[error]" in res.output
         assert "Missing 'CommitEcho-Record' trailer" in res.output
 
-    def test_empty_commit_without_trailer_passes(self, test_repo):
+    def test_empty_commit_without_trailer_rejected(self, test_repo):
         msg_file = test_repo / ".git" / "COMMIT_EDITMSG"
         msg_file.write_text("chore: empty commit\n", encoding="utf-8")
 
         runner = CliRunner()
         res = runner.invoke(check_message, [str(msg_file), "--repo", str(test_repo), "--strict"])
-        assert res.exit_code == 0
-        assert "[info]" in res.output
-        assert "No staged code changes" in res.output
+        assert res.exit_code == 1
+        assert "Missing 'CommitEcho-Record' trailer" in res.output
+
+        # Empty commits remain subject to the same policy as code commits.
+        assert runner.invoke(hook, ["install", "--git", "--strict", "--repo", str(test_repo)]).exit_code == 0
+        before = GitAdapter.from_path(test_repo).head_oid()
+        commit = subprocess.run(["git", "commit", "--allow-empty", "-m", "empty"], cwd=test_repo, capture_output=True, text=True)
+        assert commit.returncode != 0
+        assert "Missing 'CommitEcho-Record' trailer" in commit.stderr
+        assert GitAdapter.from_path(test_repo).head_oid() == before
 
     def test_multiple_trailers_strict_fails(self, test_repo):
         id1 = uuid.uuid4()
@@ -210,7 +217,7 @@ class TestCheckMessage:
         runner = CliRunner()
         res = runner.invoke(check_message, [str(msg_file), "--repo", str(test_repo), "--strict"])
         assert res.exit_code != 0
-        assert "ID mismatch" in res.output
+        assert "Invalid staged record" in res.output
 
     def test_stale_parent_strict_fails(self, test_repo):
         record_uuid, _, _ = _create_staged_record(test_repo, parent_oid="1" * 40)
@@ -252,7 +259,13 @@ class TestCheckMessage:
         assert res.exit_code == 0
         assert f"CommitEcho record {record_uuid} verified" in res.output
 
-    def test_merge_in_progress_without_trailer_passes(self, test_repo):
+        assert CliRunner().invoke(hook, ["install", "--git", "--strict", "--repo", str(root_repo)]).exit_code == 0
+        commit = subprocess.run(
+            ["git", "commit", "-F", str(msg_file)], cwd=root_repo, capture_output=True, text=True,
+        )
+        assert commit.returncode == 0, commit.stderr
+
+    def test_merge_in_progress_without_trailer_rejected(self, test_repo):
         # Create a branch and a diverged commit
         subprocess.run(["git", "checkout", "-b", "feature"], cwd=str(test_repo), check=True, capture_output=True)
         (test_repo / "feature.txt").write_text("feature content\n", encoding="utf-8")
@@ -271,9 +284,17 @@ class TestCheckMessage:
 
         runner = CliRunner()
         res = runner.invoke(check_message, [str(msg_file), "--repo", str(test_repo), "--strict"])
-        assert res.exit_code == 0
-        assert "[info]" in res.output
-        assert "Merge commit detected" in res.output
+        assert res.exit_code == 1
+        assert "Missing 'CommitEcho-Record' trailer" in res.output
+
+        assert runner.invoke(hook, ["install", "--git", "--strict", "--repo", str(test_repo)]).exit_code == 0
+        before = GitAdapter.from_path(test_repo).head_oid()
+        rejected = subprocess.run(["git", "commit", "-m", "merge"], cwd=test_repo, capture_output=True, text=True)
+        assert rejected.returncode != 0
+        assert GitAdapter.from_path(test_repo).head_oid() == before
+        record_id, _, _ = _create_staged_record(test_repo)
+        accepted = subprocess.run(["git", "commit", "-m", f"merge\n\nCommitEcho-Record: {record_id}"], cwd=test_repo, capture_output=True, text=True)
+        assert accepted.returncode == 0, accepted.stderr
 
 
 class TestHookInstallAndUninstall:
@@ -472,3 +493,185 @@ class TestGitCommitWithHook:
         assert "CommitEcho: Missing 'CommitEcho-Record' trailer" in (res.stdout + res.stderr)
         head_after = GitAdapter.from_path(test_repo).head_oid()
         assert head_after != head_before
+
+@pytest.mark.parametrize("invalid", ["missing_schema", "missing_created_at", "scalar", "manifest_version", "object_format", "parent"])
+def test_actual_hook_rejects_invalid_preparation(test_repo, invalid):
+    record_id, record_file, payload = _create_staged_record(test_repo)
+    if invalid == "missing_schema":
+        payload.pop("schema_version")
+    elif invalid == "missing_created_at":
+        payload.pop("created_at")
+    elif invalid == "scalar":
+        payload = []
+    elif invalid == "parent":
+        payload["prepared_for"]["parent_oid"] = "0" * 40  # HEAD's parent, formerly exempted.
+    else:
+        payload["prepared_for"][invalid] = 9 if invalid == "manifest_version" else "sha256"
+    record_file.write_text(json.dumps(payload), encoding="utf-8")
+    subprocess.run(["git", "add", str(record_file)], cwd=test_repo, check=True)
+    assert CliRunner().invoke(hook, ["install", "--git", "--strict", "--repo", str(test_repo)]).exit_code == 0
+    before = GitAdapter.from_path(test_repo).head_oid()
+    commit = subprocess.run(
+        ["git", "commit", "-m", f"invalid\n\nCommitEcho-Record: {record_id}"],
+        cwd=test_repo, capture_output=True, text=True,
+    )
+    assert commit.returncode != 0
+    assert "CommitEcho:" in commit.stderr
+    assert GitAdapter.from_path(test_repo).head_oid() == before
+
+
+@pytest.mark.parametrize("trailer", ["fake", "duplicate", "uppercase"])
+def test_actual_hook_rejects_invalid_declaration(test_repo, trailer):
+    record_id, _, _ = _create_staged_record(test_repo)
+    value = str(uuid.uuid4()) if trailer == "fake" else str(record_id)
+    if trailer == "uppercase":
+        value = value.upper()
+    message = f"invalid\n\nCommitEcho-Record: {value}"
+    if trailer == "duplicate":
+        message += f"\nCommitEcho-Record: {value}"
+    assert CliRunner().invoke(hook, ["install", "--git", "--strict", "--repo", str(test_repo)]).exit_code == 0
+    before = GitAdapter.from_path(test_repo).head_oid()
+    commit = subprocess.run(["git", "commit", "-m", message], cwd=test_repo, capture_output=True, text=True)
+    assert commit.returncode != 0
+    assert GitAdapter.from_path(test_repo).head_oid() == before
+
+
+def test_actual_hook_rejects_reused_record_for_amend_and_empty_commit(test_repo):
+    record_id, _, _ = _create_staged_record(test_repo)
+    assert CliRunner().invoke(hook, ["install", "--git", "--strict", "--repo", str(test_repo)]).exit_code == 0
+    subprocess.run(["git", "commit", "-m", f"valid\n\nCommitEcho-Record: {record_id}"], cwd=test_repo, check=True, capture_output=True)
+    before = GitAdapter.from_path(test_repo).head_oid()
+    for args in (["--amend", "--no-edit"], ["--allow-empty", "-C", "HEAD"], ["--allow-empty", "-m", "empty"]):
+        commit = subprocess.run(["git", "commit", *args], cwd=test_repo, capture_output=True, text=True)
+        assert commit.returncode != 0
+        assert "CommitEcho:" in commit.stderr
+        assert GitAdapter.from_path(test_repo).head_oid() == before
+
+
+def test_actual_linked_worktree_hook_uses_git_cwd_over_client_environment(test_repo, tmp_path):
+    linked = tmp_path / "linked worktree with spaces"
+    subprocess.run(["git", "worktree", "add", str(linked), "-b", "linked"], cwd=test_repo, check=True, capture_output=True)
+    assert CliRunner().invoke(hook, ["install", "--git", "--strict", "--repo", str(linked)]).exit_code == 0
+    record_id, _, _ = _create_staged_record(linked)
+    env = {**os.environ, "COMMITECHO_REPO": str(tmp_path / "nonexistent"), "CLAUDE_PROJECT_DIR": str(test_repo)}
+    commit = subprocess.run(
+        ["git", "commit", "-m", f"linked\n\nCommitEcho-Record: {record_id}"],
+        cwd=linked, env=env, capture_output=True, text=True,
+    )
+    assert commit.returncode == 0, commit.stderr
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_absent_installed_runtime_is_advisory_or_blocking(test_repo, monkeypatch, strict):
+    monkeypatch.setattr(sys, "executable", str(test_repo / "missing python"))
+    args = ["install", "--git", "--repo", str(test_repo)] + (["--strict"] if strict else [])
+    assert CliRunner().invoke(hook, args).exit_code == 0
+    before = GitAdapter.from_path(test_repo).head_oid()
+    commit = subprocess.run(["git", "commit", "--allow-empty", "-m", "empty"], cwd=test_repo, capture_output=True, text=True)
+    assert (commit.returncode != 0) is strict
+    assert "installed Python runtime is unavailable" in commit.stderr
+    assert (GitAdapter.from_path(test_repo).head_oid() == before) is strict
+
+
+def test_uninstall_refuses_external_owned_hook(test_repo, tmp_path):
+    from commitecho.transports.cli import _generate_hook_block
+    external = tmp_path / "shared-hooks"
+    external.mkdir()
+    path = external / "commit-msg"
+    original = b"#!/bin/sh\n" + _generate_hook_block(True).encode()
+    path.write_bytes(original)
+    subprocess.run(["git", "config", "core.hooksPath", str(external)], cwd=test_repo, check=True)
+    result = CliRunner().invoke(hook, ["uninstall", "--git", "--repo", str(test_repo)])
+    assert result.exit_code == 1
+    assert "external/global" in result.output
+    assert path.read_bytes() == original
+
+
+def test_owned_hook_updates_and_uninstall_preserve_foreign_bytes(test_repo):
+    from commitecho.transports.cli import _generate_hook_block
+    path = test_repo / ".git/hooks/commit-msg"
+    prefix = b"#!/bin/sh\r\n# Foreign comment \xff\r\n\r\n"
+    suffix = b"\n# Foreign tail\r\nexit 0\r\n"
+    path.write_bytes(prefix + _generate_hook_block(False).encode() + suffix)
+    result = CliRunner().invoke(hook, ["install", "--git", "--strict", "--repo", str(test_repo)])
+    assert result.exit_code == 0
+    updated = path.read_bytes()
+    assert updated.startswith(prefix) and updated.endswith(suffix)
+    result = CliRunner().invoke(hook, ["uninstall", "--git", "--repo", str(test_repo)])
+    assert result.exit_code == 0
+    assert path.read_bytes() == prefix + suffix
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_message_io_and_git_failures_use_gate_policy(test_repo, tmp_path, monkeypatch, strict):
+    args = [str(tmp_path / "missing-message"), "--repo", str(test_repo)] + (["--strict"] if strict else [])
+    result = CliRunner().invoke(check_message, args)
+    assert result.exit_code == int(strict)
+    assert "CommitEcho:" in result.output
+    message = tmp_path / "message"
+    message.write_text("commit", encoding="utf-8")
+    monkeypatch.setenv("COMMITECHO_GIT", str(tmp_path / "missing-git"))
+    result = CliRunner().invoke(check_message, [str(message), "--repo", str(test_repo)] + (["--strict"] if strict else []))
+    assert result.exit_code == int(strict)
+    assert "CommitEcho:" in result.output
+
+
+def test_trailer_after_divider_and_rename_manifest_stay_consistent(test_repo):
+    git = GitAdapter.from_path(test_repo)
+    record_id = str(uuid.uuid4())
+    assert git.read_message_trailers(f"subject\n\n---\n\nCommitEcho-Record: {record_id}\n") == {"CommitEcho-Record": [record_id]}
+    subprocess.run(["git", "mv", "README.md", "renamed.md"], cwd=test_repo, check=True)
+    fingerprints = []
+    for rename_setting in ("true", "false", "copies"):
+        subprocess.run(["git", "config", "diff.renames", rename_setting], cwd=test_repo, check=True)
+        fingerprints.append(git.code_fingerprint()[0])
+    assert len(set(fingerprints)) == 1
+    subprocess.run(["git", "commit", "-m", "rename"], cwd=test_repo, check=True, capture_output=True)
+    actual = fingerprint_manifest(build_code_manifest(git.staged_entries_for_commit(git.head_oid()), git.repo_info.object_format))
+    assert actual == fingerprints[0]
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_installed_runtime_module_failure_uses_hook_policy(test_repo, monkeypatch, strict):
+    import shlex
+    launcher = test_repo / "python with '$ quote.sh"
+    interpreter = shlex.quote(Path(sys.executable).as_posix())
+    # -S suppresses installed site-packages, including CommitEcho's editable installation.
+    launcher.write_bytes(f'#!/bin/sh\nexec {interpreter} -S "$@"\n'.encode())
+    os.chmod(launcher, 0o755)
+    monkeypatch.setattr(sys, "executable", str(launcher))
+    args = ["install", "--git", "--repo", str(test_repo)] + (["--strict"] if strict else [])
+    assert CliRunner().invoke(hook, args).exit_code == 0
+    before = GitAdapter.from_path(test_repo).head_oid()
+    commit = subprocess.run(["git", "commit", "--allow-empty", "-m", "runtime check"], cwd=test_repo, capture_output=True, text=True)
+    assert (commit.returncode != 0) is strict
+    assert "No module named commitecho" in commit.stderr
+    assert "message validation failed" in commit.stderr
+    assert (GitAdapter.from_path(test_repo).head_oid() == before) is strict
+
+
+def test_hook_discovery_failure_does_not_fall_back_to_default(test_repo, monkeypatch):
+    import commitecho.git.adapter as adapter
+    git = GitAdapter.from_path(test_repo)
+    def fail(*_args, **_kwargs):
+        raise adapter.GitError("cannot inspect effective hook directory")
+    monkeypatch.setattr(adapter, "_run", fail)
+    with pytest.raises(adapter.GitError, match="cannot inspect"):
+        git.get_hook_path("commit-msg")
+
+
+def test_recorded_commit_without_code_uses_custom_local_hooks_path(test_repo):
+    record_id, record_file, payload = _create_staged_record(test_repo)
+    subprocess.run(["git", "reset", "--", "hello.py"], cwd=test_repo, check=True, capture_output=True)
+    payload["prepared_for"]["code_manifest_sha256"] = GitAdapter.from_path(test_repo).code_fingerprint()[0]
+    record_file.write_text(json.dumps(payload), encoding="utf-8")
+    subprocess.run(["git", "add", str(record_file)], cwd=test_repo, check=True)
+    subprocess.run(["git", "config", "core.hooksPath", ".local-hooks"], cwd=test_repo, check=True)
+    assert CliRunner().invoke(hook, ["install", "--git", "--strict", "--repo", str(test_repo)]).exit_code == 0
+    installed = test_repo / ".local-hooks/commit-msg"
+    assert b"\r\n" not in installed.read_bytes()
+    commit = subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", f"record only\n\nCommitEcho-Record: {record_id}"],
+        cwd=test_repo, capture_output=True, text=True,
+    )
+    assert commit.returncode == 0, commit.stderr
