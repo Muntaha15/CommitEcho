@@ -4,7 +4,7 @@ Preserve the decisions behind code changes and recall them through your coding a
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.1.1 in development (`0.1.1.dev0`); v0.1.0 is the published release.** Four local client configuration profiles are available. On 2026-10-03, interactive Codex and Antigravity IDE completed capture, commit, verification, indexing, process restart, and recall in a fresh process. Supplied Claude Code CLI reports record that workflow plus organic skill activation in Windows print mode with local approval, and plugin loading with index-only recall. Round 2 exposed alternative-field loss; the remediation adds validation and skill v6 guidance, with revised live Claude capture still pending. Claude and Copilot interactive acceptance, native lifecycle hooks, and plugin capture remain pending. See the [Codex results](CODEX_LIVE_TEST.md), [Antigravity results](ANTIGRAVITY_LIVE_TEST.md), [Claude Code report](CLAUDE_CODE_LIVE_TEST.md), and [capability ledger](CAPABILITY_LEDGER.md).
+**Status: v0.2.0 in development (`0.2.0.dev0`); v0.1.0 is the published release.** This candidate adds Claude setup/plugin generation, an opt-in Git message gate, bounded indexing, and safer setup/cleanup and plugin upgrades. Four local client configuration profiles are available. Recorded Codex and Antigravity workflows and supplied Claude print-mode/plugin-loading results retain their original scope; revised skill v6 Claude project/plugin capture and the latest Antigravity IDE UAT are pending. See the [UAT checklist](RELEASE_UAT_CHECKLIST.md), [Codex results](CODEX_LIVE_TEST.md), [Antigravity results](ANTIGRAVITY_LIVE_TEST.md), [Claude Code report](CLAUDE_CODE_LIVE_TEST.md), and [capability ledger](CAPABILITY_LEDGER.md).
 
 ## Install
 
@@ -108,6 +108,8 @@ commitecho setup --client codex --dry-run
 
 Without `--client`, setup configures all four profiles. It writes the MCP server config and shared skill; Codex, Copilot, and Claude receive activation instructions, and Antigravity receives a persistent activation rule (`trigger: always_on`). Dry-run writes no files or private databases and lists planned changes. Existing launch overrides and customized skills are preserved. Use `--regenerate-server` to explicitly refresh the managed launch fields while retaining other settings. Test discovery in your actual client before relying on automatic capture.
 
+Setup also preflights legacy skill cleanup paths. If configuration, skill, instruction, or cleanup paths resolve outside the selected repository through a link or junction, setup rejects them before changing any selected profile. Move shared custom assets into an appropriate local layout or migrate them manually.
+
 The default uses the active Python interpreter and absolute checkout path, so generated configuration stays local. `setup --client claude_code --portable` uses an installed `commitecho` on PATH and Claude's documented project-root environment. Other profiles reject `--portable`; use `--server-cmd` for an explicit launcher, and setup appends the repository argument. A custom command is an argv string, not a shell script; quote paths containing spaces and do not include pipes or shell expansion.
 
 
@@ -145,6 +147,8 @@ Advisory mode warns and permits validation failures; strict mode rejects them, i
 
 Explicit indexing can be bounded with `commitecho index --timeout 5 --quiet`; the deadline covers the indexing process, including repository discovery, database access, and history traversal. A deadline leaves completed index transactions reusable and reports incomplete work. Native `hook install --client claude_code` remains gated until an actual supported Claude runtime has been qualified; JSON generation alone does not establish event behavior.
 
+Cleanup of earlier generated Claude hooks refuses settings paths outside the repository. Combined Git/Claude cleanup validates both targets before making changes; predictable path or configuration errors preserve both. This does not provide a transaction across files if the operating system fails during a write.
+
 
 ### Generate Claude Code plugin
 
@@ -165,6 +169,8 @@ commitecho plugin --output-dir local-commitecho-plugin --dry-run
 ```
 
 Without `--output-dir`, generation targets `commitecho-plugin/`. This checkout tracks a portable example there; local generation replaces its launch fields with your interpreter path, so use a separate output directory. The default pins the current interpreter and requires CommitEcho installed in that environment. The portable example also requires Python, Git, CommitEcho, and its dependencies installed on PATH; it performs no registry download. Regeneration refuses customized or unrelated assets before writing. This is an installed-runtime plugin, not a bundled Python runtime.
+
+Stock plugin manifests can regenerate across package versions, including development-to-release upgrades; customized metadata, skills, and launch definitions stay protected. If an older local plugin points to a different Python installation, generate into a fresh output directory and validate it before switching the client.
 
 When Claude is available, run `claude plugin validate ./local-commitecho-plugin`, then test a plugin-loaded project session for tools, skill discovery, and capture/recall. Manifest validation alone does not prove startup. For local testing use `claude --plugin-dir ./local-commitecho-plugin` as described in the [official plugin reference](https://code.claude.com/docs/en/plugins-reference). Disable the project `.mcp.json` CommitEcho entry while enabling the plugin, or use a clean fixture project, so the same server and skill are not registered twice. Restore project setup when disabling the plugin. No native hooks ship with this artifact.
 

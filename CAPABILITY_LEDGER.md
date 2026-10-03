@@ -1,10 +1,36 @@
 # CommitEcho client capability ledger
 
-Updated 2026-10-03 after Claude UAT remediation on base `4a1478d`. Configuration, MCP
+Updated 2026-10-04 for the `0.2.0.dev0` candidate. Configuration, MCP
 protocol, agent workflow, and native lifecycle qualification are separate.
-See [the implementation review](MULTI_CLIENT_INTEGRATION_REVIEW.md).
+See [the implementation review](MULTI_CLIENT_INTEGRATION_REVIEW.md),
+[release plan](V0_2_0_IMPLEMENTATION_PLAN.md), and
+[remaining UAT](RELEASE_UAT_CHECKLIST.md).
+
+Local remediation covers setup/cleanup confinement, combined-uninstall
+preflight, and conservative cross-version plugin regeneration. Current native
+Antigravity IDE and Claude Code project/plugin acceptance will be performed
+by testers from a fresh clone; their results remain pending. Older dated
+client evidence below is retained with its original versions and scope.
 
 ## Recorded environment
+
+- Candidate `0.2.0.dev0`, skill v6, 2026-10-04: **377 passed, 9 skipped in
+  526.09 seconds**, Windows, Python 3.12.14, MCP SDK 2.2.0. All real stdio
+  handshakes and real directory-junction regressions ran. The skips were
+  `test_all_client_preflight_rejects_symlink_escaping_repository` and all eight
+  parameters of `test_setup_rejects_external_legacy_file_symlink_before_writes`:
+  observed WinError 1314 on symlink creation. Enable Developer Mode or use an
+  elevated shell and rerun. The user's earlier isolated pass stays separate.
+  Final independent code review found no remaining actionable findings.
+- Rebuilt candidate wheel, isolated installation outside the checkout without
+  `PYTHONPATH`, resolved MCP 2.3.0: CLI version/help/init/setup/doctor passed;
+  **9 passed in 80.71 seconds** for all four profile launches, three full
+  restart/clone lifecycles, and local/portable plugin launches. One unused
+  pytest `asyncio_mode` configuration warning arose because this synchronous
+  subset did not install pytest-asyncio. This is not a newer-SDK full-suite claim.
+  Wheel SHA256: `a830f785048de56975a7756262d87518c29645673f54fe27f58a476a6fced950`.
+  The ignored local stock shared skill was refreshed from v4 to v6; the
+  running session's automatic reload/discovery was not qualified.
 
 - Independent remediation implementation `bfa2b5a`, skill v6,
   CommitEcho `0.1.1.dev0`: **285 passed, 1 skipped in 379.19 seconds** on
@@ -145,11 +171,11 @@ artifact; the checked-in example uses `commitecho serve` and requires an
 installed package and dependencies. Regeneration preflights ownership and
 preserves customized/unrelated files. No hooks ship in the plugin.
 
-Protocol smoke tests are separate from `claude plugin validate` and an actual
-plugin-loaded project session, both still pending. Claude is not on PATH in the
-local follow-up environment; the supplied external UAT did not test plugins.
-The smoke tests use the installed editable package without `PYTHONPATH`;
-revised standalone-wheel installation and offline distribution were not tested.
+Supplied round 2 Claude evidence established plugin loading and index-only
+clone recall with skill v5. Actual plugin validation and organic v6 capture
+remain pending; protocol smoke tests do not establish those outcomes.
+Standalone-wheel validation is recorded separately from editable-package
+tests and actual client acceptance. Offline distribution remains unqualified.
 Disable project CommitEcho registration while enabling the plugin to avoid
 duplicate server/skill discovery. Registry execution, bundled runtimes,
 historian, and extra slash skills remain deferred.

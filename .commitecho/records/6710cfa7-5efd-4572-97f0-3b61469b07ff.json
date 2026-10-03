@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "record_id": "6710cfa7-5efd-4572-97f0-3b61469b07ff",
+  "change_id": "0ac9d641-66a6-486e-a53b-89dc0f3305f0",
+  "summary": "Prepare the validated 0.2.0 development candidate and concise native-client UAT handoff.",
+  "prepared_for": {
+    "parent_oid": "45d96b201d7f92775df5292561671da1333c7330",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "6ef137e3e9178247f41ad7b9bd6f00af4f29e7ba93b6282ade2f224678eb545c"
+  },
+  "decisions": [
+    {
+      "decision_id": "1be40739-a234-42ce-a1f4-67dbd9a71153",
+      "revision_id": "b4257a1a-a1d0-476a-9c5a-1c0f9357962e",
+      "predecessor_revision_ids": [
+        "eb3b2ab7-4916-41f4-ac6f-7e35c16b9dad"
+      ],
+      "disposition": "selected",
+      "problem": "The feature release needs verified local readiness and honest native-client release gates.",
+      "choice": "Align development candidate at 0.2.0.dev0, refresh stock local skill, preserve historical scope, and hand native UAT to testers through a concise checklist.",
+      "rationale": "Claude setup/plugins, Git validation/hooks, and bounded indexing justify v0.2.0. All local repairs are verified; project/plugin organic v6 capture still needs actual-client evidence before final version/tag/publication.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "pyproject.toml",
+          "src/commitecho/__init__.py",
+          "commitecho-plugin/.claude-plugin/plugin.json",
+          "README.md",
+          "RELEASE_NOTES.md",
+          "CAPABILITY_LEDGER.md",
+          "V0_2_0_IMPLEMENTATION_PLAN.md",
+          "RELEASE_UAT_CHECKLIST.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "v020-final-suite",
+        "v020-wheel",
+        "v020-final-review"
+      ],
+      "captured_at": "2026-10-03T20:34:16.394526Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "v020-final-review",
+      "kind": "code_observation",
+      "origin": "agent_reported",
+      "content": "Independent final subagent review clean after parent confinement repair; no actionable findings. Metadata and portable manifest agree with0.2.0.dev0; canonical/plugin skills equal; all public local doclinks resolve; git diff checks clean. Local ignored stock skill refreshed v4->v6, active-session automatic reload unqualified. No external UAT, push, tag or publication claimed.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T20:34:16.394526Z",
+      "verification_method": null
+    },
+    {
+      "evidence_id": "v020-wheel",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Final rebuilt wheel SHA256 a830f785048de56975a7756262d87518c29645673f54fe27f58a476a6fced950 installed in a fresh env with resolved MCP2.3.0. Outside checkout/no PYTHONPATH import resolves fresh site-packages. CLI version/help/init/setup/doctor passed. Existing four profile launch, three restart/clone lifecycle, and local/portable plugin launch cases: 9 passed in80.71s, one unused asyncio_mode config warning (pytest-asyncio absent in synchronous subset). Not newer-SDK full suite.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T20:34:16.394526Z",
+      "verification_method": null
+    },
+    {
+      "evidence_id": "v020-final-suite",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Final complete project suite: 377 passed, 9 skipped in 526.09s on Windows/Python3.12.14/MCP2.2.0. All MCP stdio and junction regressions executed. Skipped test_all_client_preflight_rejects_symlink_escaping_repository plus eight test_setup_rejects_external_legacy_file_symlink_before_writes parameters encountered actual WinError1314. Remedy Developer Mode/elevated shell. Earlier interrupted run and isolated passes are not counted.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T20:34:16.394526Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-03T20:37:08.846149Z"
+}

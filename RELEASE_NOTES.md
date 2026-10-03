@@ -1,6 +1,45 @@
 # CommitEcho release notes
 
-## v0.1.1 - in development
+## v0.2.0 - in development
+
+Package version: `0.2.0.dev0`; portable plugin: `0.2.0-dev.0`. This candidate
+has not been released. v0.1.0 remains the published release.
+
+The feature release includes Claude Code setup/plugin generation, opt-in Git
+message validation and hook management, bounded indexing, and shared skill v6.
+The prior `0.1.1.dev0` milestones below are included in this candidate.
+
+Release-review repairs close R1-R4: legacy skill cleanup and Claude settings
+cleanup reject paths outside the selected repository; combined hook uninstall
+preflights both targets; stock plugin manifests upgrade across package versions
+while customized assets remain protected. No dependency or storage migration
+is added. Native lifecycle installation remains gated.
+
+Local candidate validation on 2026-10-04: **377 passed, 9 skipped in 526.09
+seconds**, Windows, Python 3.12.14, MCP SDK 2.2.0. All real MCP stdio checks
+and directory-junction regressions ran. The skips were
+`test_all_client_preflight_rejects_symlink_escaping_repository` and eight
+parameterizations of `test_setup_rejects_external_legacy_file_symlink_before_writes`;
+each encountered WinError 1314 creating its symlink. Enable Windows Developer
+Mode or use an elevated shell and rerun; earlier isolated passes do not alter
+this full-suite count.
+
+The rebuilt wheel installed into a fresh environment with MCP 2.3.0 and,
+from outside the checkout without `PYTHONPATH`, passed CLI version/help/init/
+setup/doctor and **9 installed-artifact tests in 80.71 seconds**: all four
+generated client launches, three restart/clone capture lifecycles, and local/
+portable plugin launches. Pytest reported one unused `asyncio_mode` config
+warning because the isolated harness omitted pytest-asyncio; these synchronous
+tests execute their live async flows directly. This is separate from the full
+MCP 2.2.0 suite. Metadata, canonical/plugin skill equality, public local links,
+and whitespace checks passed. The local ignored stock skill was refreshed to
+v6; automatic loading in a new native client session remains a UAT check.
+
+Live UAT is delegated to testers using a fresh clone and the
+[Antigravity and Claude Code checklist](RELEASE_UAT_CHECKLIST.md). Revised
+Claude v6 project/plugin capture remains a release qualification gate.
+
+## v0.1.1 development milestones - superseded by v0.2.0
 
 Package version: `0.1.1.dev0`. This work has not been released; v0.1.0 remains
 the published release. The portable plugin uses SemVer `0.1.1-dev.0`.
