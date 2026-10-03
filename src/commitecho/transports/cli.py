@@ -998,13 +998,22 @@ def _install_git_hook(git: GitAdapter, strict: bool, dry_run: bool) -> None:
     click.echo("Git hook installed successfully.")
 
 
-def _uninstall_git_hook(git: GitAdapter, dry_run: bool) -> None:
+def _preflight_git_hook_cleanup(git: GitAdapter) -> tuple[Path, bytes | None]:
     hook_file = _local_git_hook(git)
+    try:
+        return hook_file, hook_file.read_bytes()
+    except FileNotFoundError:
+        return hook_file, None
+
+
+def _uninstall_git_hook(
+    git: GitAdapter, dry_run: bool, validated: tuple[Path, bytes | None] | None = None,
+) -> None:
+    hook_file, existing = validated if validated is not None else _preflight_git_hook_cleanup(git)
     display_path = _display_rel_path(hook_file, git.repo_info.worktree_dir)
-    if not hook_file.exists():
+    if existing is None:
         click.echo(f"[skip] No hook file found at '{display_path}'.")
         return
-    existing = hook_file.read_bytes()
     span = _hook_block_span(existing)
     if span is None:
         click.echo(f"[skip] '{display_path}' is not managed by CommitEcho; leaving unchanged.")
@@ -1044,20 +1053,34 @@ def _is_generated_claude_hook(handler: object) -> bool:
         return False
 
 
-def _uninstall_claude_code_hook(wt: Path, dry_run: bool) -> None:
+def _preflight_claude_hook_cleanup(wt: Path) -> tuple[Path, dict | None]:
+    from commitecho.integrations.profiles import validate_repo_path
+
     settings_file = wt / ".claude" / "settings.json"
     display_path = _display_rel_path(settings_file, wt)
-
-    if not settings_file.exists():
-        click.echo(f"[skip] No settings file found at '{display_path}'.")
-        return
-
+    try:
+        validate_repo_path(wt, settings_file)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
     try:
         settings_data = json.loads(settings_file.read_text(encoding="utf-8"))
         if not isinstance(settings_data, dict):
             raise ValueError("root is not a JSON object")
-    except Exception as exc:
-        raise click.ClickException(f"Failed to parse '{display_path}': {exc}")
+    except FileNotFoundError:
+        return settings_file, None
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise click.ClickException(f"Failed to parse '{display_path}': {exc}") from exc
+    return settings_file, settings_data
+
+
+def _uninstall_claude_code_hook(
+    wt: Path, dry_run: bool, validated: tuple[Path, dict | None] | None = None,
+) -> None:
+    settings_file, settings_data = validated if validated is not None else _preflight_claude_hook_cleanup(wt)
+    display_path = _display_rel_path(settings_file, wt)
+    if settings_data is None:
+        click.echo(f"[skip] No settings file found at '{display_path}'.")
+        return
 
     hooks_dict = settings_data.get("hooks")
     if not isinstance(hooks_dict, dict):
@@ -1121,7 +1144,7 @@ def hook() -> None:
 @hook.command("install")
 @click.option("--git", "use_git", is_flag=True, default=False, help="Install Git commit-msg hook.")
 @click.option("--client", "client_id", default=None, type=click.Choice(["claude_code"]),
-              help="Install client lifecycle hook (claude_code SessionStart bounded indexing).")
+              help="Claude Code lifecycle installation is gated pending native-client qualification.")
 @click.option("--repo", default=None, help="Path to the Git repository.")
 @click.option("--strict", is_flag=True, default=False, help="Reject commits that fail message validation (Git hook only).")
 @click.option("--timeout", default=5.0, type=float, callback=_positive_timeout, help="Timeout in seconds for bounded indexing hook (default: 5.0).")
@@ -1177,14 +1200,15 @@ def hook_uninstall(
     git = _resolve_repo(repo)
     wt = Path(git.repo_info.worktree_dir)
 
-    if use_git:
-        try:
-            _uninstall_git_hook(git, dry_run=dry_run)
-        except (GitError, OSError) as exc:
-            raise click.ClickException(str(exc)) from exc
-
-    if client_id == "claude_code":
-        _uninstall_claude_code_hook(wt, dry_run=dry_run)
+    try:
+        git_cleanup = _preflight_git_hook_cleanup(git) if use_git else None
+        claude_cleanup = _preflight_claude_hook_cleanup(wt) if client_id == "claude_code" else None
+        if git_cleanup is not None:
+            _uninstall_git_hook(git, dry_run=dry_run, validated=git_cleanup)
+        if claude_cleanup is not None:
+            _uninstall_claude_code_hook(wt, dry_run=dry_run, validated=claude_cleanup)
+    except (GitError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

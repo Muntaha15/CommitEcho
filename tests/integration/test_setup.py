@@ -26,6 +26,7 @@ from commitecho.integrations.profiles import (
     SKILL_VERSION,
     SetupGenerator,
     _SKILL_TEMPLATE,
+    validate_repo_path,
 )
 
 
@@ -46,6 +47,15 @@ def _read_config(path: Path, profile):
 
 def _legacy_skill(version: int = 2) -> str:
     return (Path(__file__).parents[1] / "fixtures" / f"skill-v{version}.md").read_text(encoding="utf-8")
+
+
+def _symlink_or_skip(link: Path, target: Path, *, directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=directory)
+    except OSError as exc:
+        if os.name == "nt" and exc.winerror == 1314:
+            pytest.skip("WinError 1314: enable Windows Developer Mode or use an elevated shell to create symlinks")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -467,15 +477,135 @@ def test_all_client_preflight_rejects_symlink_escaping_repository(tmp_path: Path
     outside = tmp_path / "unrelated"
     subprocess.run(["git", "init", str(worktree)], check=True, capture_output=True)
     outside.mkdir()
-    try:
-        (worktree / ".claude").symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("Creating a directory symlink requires permission on this Windows installation")
+    _symlink_or_skip(worktree / ".claude", outside, directory=True)
     result = CliRunner().invoke(setup, ["--repo", str(worktree)])
     assert result.exit_code == 1
     assert "outside the repository" in result.output
     assert not (worktree / ".codex").exists()
     assert not list(outside.iterdir())
+
+
+@pytest.mark.parametrize("legacy_dir", [".codex/skills", ".agents/skills"])
+@pytest.mark.parametrize("client_id", [None, "codex", "antigravity", "copilot_vscode"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_setup_rejects_external_legacy_directory_link_before_writes(
+    tmp_path: Path, directory_link, legacy_dir: str, client_id: str | None, dry_run: bool,
+) -> None:
+    from click.testing import CliRunner
+    from commitecho.transports.cli import setup
+
+    worktree = tmp_path / "repository"
+    outside = tmp_path / "unrelated"
+    subprocess.run(["git", "init", str(worktree)], check=True, capture_output=True)
+    outside.mkdir()
+    legacy = outside / "commitecho.md"
+    original = _legacy_skill().encode("utf-8")
+    legacy.write_bytes(original)
+    link = directory_link(worktree / legacy_dir, outside)
+    instructions = worktree / "AGENTS.md"
+    instructions.write_bytes(b"Private instructions\n")
+    args = ["--repo", str(worktree)]
+    if client_id:
+        args += ["--client", client_id]
+    if dry_run:
+        args.append("--dry-run")
+
+    result = CliRunner().invoke(setup, args)
+
+    assert result.exit_code == 1, result.output
+    assert "outside the repository" in result.output
+    assert legacy.read_bytes() == original
+    assert link.resolve() == outside.resolve()
+    assert list(outside.iterdir()) == [legacy]
+    assert instructions.read_bytes() == b"Private instructions\n"
+    for profile in ALL_PROFILES.values():
+        for path in (profile.mcp_config_path, profile.skill_path, profile.instruction_path):
+            if path and path != "AGENTS.md":
+                assert not (worktree / path).exists(), path
+    assert not (worktree / ".git/commitecho").exists()
+
+
+@pytest.mark.parametrize("legacy_dir", [".codex/skills", ".agents/skills"])
+def test_claude_only_setup_preserves_external_legacy_directory_link(
+    tmp_path: Path, directory_link, legacy_dir: str,
+) -> None:
+    worktree = tmp_path / "repository"
+    outside = tmp_path / "unrelated"
+    worktree.mkdir()
+    outside.mkdir()
+    legacy = outside / "commitecho.md"
+    legacy.write_text(_legacy_skill(), encoding="utf-8")
+    link = directory_link(worktree / legacy_dir, outside)
+
+    _make_generator(worktree).generate(ALL_PROFILES["claude_code"])
+
+    assert legacy.read_text(encoding="utf-8") == _legacy_skill()
+    assert link.resolve() == outside.resolve()
+    assert (worktree / ALL_PROFILES["claude_code"].skill_path).exists()
+
+
+@pytest.mark.parametrize("leaf_backlink", [False, True])
+def test_repo_path_rejects_external_parent_even_when_target_returns_inside(
+    tmp_path: Path, directory_link, leaf_backlink: bool,
+) -> None:
+    worktree = tmp_path / "repository"
+    outside = tmp_path / "unrelated"
+    worktree.mkdir()
+    outside.mkdir()
+    owned = worktree / "owned"
+    owned.mkdir()
+    preserved = worktree / "commitecho.md"
+    preserved.write_bytes(b"Repository-owned content\n")
+    outer = directory_link(worktree / (".claude" if leaf_backlink else ".codex"), outside)
+    inner = directory_link(
+        outside / ("settings.json" if leaf_backlink else "skills"),
+        owned if leaf_backlink else worktree,
+    )
+    candidate = outer / ("settings.json" if leaf_backlink else "skills/commitecho.md")
+    assert candidate.resolve().is_relative_to(worktree.resolve())
+
+    with pytest.raises(ValueError, match="outside the repository"):
+        validate_repo_path(worktree, candidate)
+
+    assert outer.resolve() == outside.resolve()
+    assert inner.resolve() == (owned if leaf_backlink else worktree).resolve()
+    assert preserved.read_bytes() == b"Repository-owned content\n"
+
+
+def test_repo_path_accepts_linked_worktree_root(tmp_path: Path, directory_link) -> None:
+    worktree = tmp_path / "repository"
+    worktree.mkdir()
+    linked_root = directory_link(tmp_path / "linked-repository", worktree)
+
+    validate_repo_path(linked_root, linked_root / ".claude/settings.json")
+
+
+@pytest.mark.parametrize("legacy_path", [".codex/skills/commitecho.md", ".agents/skills/commitecho.md"])
+@pytest.mark.parametrize("dangling", [False, True])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_setup_rejects_external_legacy_file_symlink_before_writes(
+    tmp_path: Path, legacy_path: str, dangling: bool, dry_run: bool,
+) -> None:
+    worktree = tmp_path / "repository"
+    outside = tmp_path / "outside.md"
+    original = _legacy_skill().encode("utf-8")
+    if not dangling:
+        outside.write_bytes(original)
+    link = worktree / legacy_path
+    link.parent.mkdir(parents=True)
+    _symlink_or_skip(link, outside)
+
+    with pytest.raises(ValueError, match="outside the repository"):
+        _make_generator(worktree).generate(ALL_PROFILES["antigravity"], dry_run=dry_run)
+
+    assert link.is_symlink()
+    if dangling:
+        assert not outside.exists()
+    else:
+        assert outside.read_bytes() == original
+    profile = ALL_PROFILES["antigravity"]
+    for path in (profile.mcp_config_path, profile.skill_path, profile.instruction_path):
+        assert not (worktree / path).exists()
 
 
 @pytest.mark.parametrize("command", ["", "   ", '"unterminated', '"" -m commitecho'])
@@ -1141,5 +1271,3 @@ def test_claude_code_lifecycle_with_project_dir_env(tmp_path: Path) -> None:
                 assert evidence["commit_oid"] == commit_oid
 
     asyncio.run(lifecycle())
-
-

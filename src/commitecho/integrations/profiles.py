@@ -27,6 +27,24 @@ SKILL_TEMPLATE: str = _SKILL_TEMPLATE
 # Extract the declared version from the YAML front-matter (``version: N``).
 _version_match = re.search(r"^version:\s*(\d+)", _SKILL_TEMPLATE, re.MULTILINE)
 SKILL_VERSION: int = int(_version_match.group(1)) if _version_match else 0
+_SHARED_SKILL_PATH = ".agents/skills/commitecho/SKILL.md"
+_LEGACY_SKILL_PATHS = (Path(".codex/skills/commitecho.md"), Path(".agents/skills/commitecho.md"))
+
+
+def validate_repo_path(root: Path, candidate: Path) -> None:
+    """Confine assets and each parent entry to their owning worktree."""
+    resolved_root = root.resolve()
+    lexical_root = root.absolute()
+    candidate = candidate.absolute()
+    for path in (candidate, *candidate.parents):
+        try:
+            path.resolve().relative_to(resolved_root)
+        except ValueError as exc:
+            raise ValueError(f"Path '{path}' resolves outside the repository; leaving it unchanged.") from exc
+        if path != candidate and path.exists() and not path.is_dir():
+            raise ValueError(f"Path parent '{path}' must be a directory.")
+        if path == lexical_root:
+            break
 
 
 def is_known_generated_skill(content: str) -> bool:
@@ -212,19 +230,12 @@ class SetupGenerator:
 
         for profile in profiles:
             output_paths = [profile.mcp_config_path, profile.skill_path, profile.instruction_path]
+            legacy_paths = _LEGACY_SKILL_PATHS if profile.skill_path == _SHARED_SKILL_PATH else ()
+            output_paths.extend(legacy_paths)
             for rel_path in output_paths:
                 if not rel_path:
                     continue
-                output = self._root / rel_path
-                try:
-                    output.resolve().relative_to(self._root.resolve())
-                except ValueError as exc:
-                    raise ValueError(f"Output '{rel_path}' resolves outside the repository; leaving it unchanged.") from exc
-                parent = output.parent
-                while parent != self._root:
-                    if parent.exists() and not parent.is_dir():
-                        raise ValueError(f"Output parent '{parent}' must be a directory.")
-                    parent = parent.parent
+                validate_repo_path(self._root, self._root / rel_path)
             config_file = self._root / profile.mcp_config_path
             if config_file.exists():
                 try:
@@ -239,8 +250,7 @@ class SetupGenerator:
                     raise ValueError(f"Invalid configuration in '{profile.mcp_config_path}': {exc}") from exc
             # Read every selected asset before any profile starts writing.
             asset_paths = [profile.skill_path, profile.instruction_path]
-            if profile.skill_path == ".agents/skills/commitecho/SKILL.md":
-                asset_paths.extend([".codex/skills/commitecho.md", ".agents/skills/commitecho.md"])
+            asset_paths.extend(legacy_paths)
             for rel_path in asset_paths:
                 if rel_path and (asset_file := self._root / rel_path).exists():
                     asset_file.read_text(encoding="utf-8")
@@ -356,9 +366,9 @@ class SetupGenerator:
 
         # Legacy skill migration / cleanup
         legacy_paths = (
-            [Path(".codex/skills/commitecho.md"), Path(".agents/skills/commitecho.md")]
-            if profile.skill_path == ".agents/skills/commitecho/SKILL.md" and replacement_available
-            else []
+            _LEGACY_SKILL_PATHS
+            if profile.skill_path == _SHARED_SKILL_PATH and replacement_available
+            else ()
         )
         for rel_legacy in legacy_paths:
             if rel_legacy in self._migrated_legacy:

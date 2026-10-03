@@ -101,6 +101,145 @@ class TestBoundedIndex:
 
 
 class TestClaudeCodeSessionHook:
+    @staticmethod
+    def generated_settings():
+        return {"hooks": {"SessionStart": [{"matcher": "startup|resume", "hooks": [{
+            "type": "command", "command": "commitecho",
+            "args": ["index", "--timeout", "5.0", "--quiet"],
+        }]}]}}
+
+    @pytest.mark.parametrize("foreign_settings", [False, True])
+    @pytest.mark.parametrize("combined", [False, True])
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_external_claude_directory_link_preserves_both_targets(
+        self, test_repo, tmp_path, directory_link, foreign_settings, combined, dry_run,
+    ):
+        runner = CliRunner()
+        assert runner.invoke(hook, ["install", "--git", "--repo", str(test_repo)]).exit_code == 0
+        git_hook = test_repo / ".git" / "hooks" / "commit-msg"
+        git_before = git_hook.read_bytes()
+        external = tmp_path / "shared-claude"
+        external.mkdir()
+        settings = self.generated_settings()
+        if foreign_settings:
+            settings["model"] = "retain"
+        settings_file = external / "settings.json"
+        settings_file.write_text(json.dumps(settings), encoding="utf-8")
+        before = settings_file.read_bytes()
+        link = directory_link(test_repo / ".claude", external)
+        args = ["uninstall", "--client", "claude_code", "--repo", str(test_repo)]
+        result = runner.invoke(hook, args + (["--git"] if combined else []) + (["--dry-run"] if dry_run else []))
+        assert result.exit_code == 1, result.output
+        assert "outside the repository" in result.output
+        assert settings_file.read_bytes() == before
+        assert git_hook.read_bytes() == git_before
+        assert link.is_dir()
+
+    @pytest.mark.parametrize("invalid", [b"{invalid", b"[]", b"\xff", None])
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_combined_invalid_claude_settings_preserve_git_hook(self, test_repo, invalid, dry_run):
+        runner = CliRunner()
+        assert runner.invoke(hook, ["install", "--git", "--repo", str(test_repo)]).exit_code == 0
+        git_hook = test_repo / ".git" / "hooks" / "commit-msg"
+        git_before = git_hook.read_bytes()
+        settings_file = test_repo / ".claude" / "settings.json"
+        settings_file.parent.mkdir()
+        if invalid is None:
+            settings_file.mkdir()
+        else:
+            settings_file.write_bytes(invalid)
+        args = ["uninstall", "--git", "--client", "claude_code", "--repo", str(test_repo)]
+        result = runner.invoke(hook, args + (["--dry-run"] if dry_run else []))
+        assert result.exit_code == 1, result.output
+        assert "settings.json" in result.output
+        assert git_hook.read_bytes() == git_before
+        if invalid is None:
+            assert settings_file.is_dir()
+        else:
+            assert settings_file.read_bytes() == invalid
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_combined_invalid_claude_parent_preserves_git_hook(self, test_repo, dry_run):
+        runner = CliRunner()
+        assert runner.invoke(hook, ["install", "--git", "--repo", str(test_repo)]).exit_code == 0
+        git_hook = test_repo / ".git" / "hooks" / "commit-msg"
+        before = git_hook.read_bytes()
+        claude_path = test_repo / ".claude"
+        claude_path.write_bytes(b"foreign file")
+        args = ["uninstall", "--git", "--client", "claude_code", "--repo", str(test_repo)]
+        result = runner.invoke(hook, args + (["--dry-run"] if dry_run else []))
+        assert result.exit_code == 1, result.output
+        assert "must be a directory" in result.output
+        assert git_hook.read_bytes() == before
+        assert claude_path.read_bytes() == b"foreign file"
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_combined_external_git_hook_preserves_claude_settings(self, test_repo, tmp_path, dry_run):
+        from commitecho.transports.cli import _generate_hook_block
+
+        external = tmp_path / "shared-hooks"
+        external.mkdir()
+        git_hook = external / "commit-msg"
+        git_before = b"#!/bin/sh\n" + _generate_hook_block(False).encode()
+        git_hook.write_bytes(git_before)
+        subprocess.run(["git", "config", "core.hooksPath", str(external)], cwd=test_repo, check=True)
+        settings_file = test_repo / ".claude" / "settings.json"
+        settings_file.parent.mkdir()
+        settings_file.write_text(json.dumps(self.generated_settings()), encoding="utf-8")
+        before = settings_file.read_bytes()
+        args = ["uninstall", "--git", "--client", "claude_code", "--repo", str(test_repo)]
+        result = CliRunner().invoke(hook, args + (["--dry-run"] if dry_run else []))
+        assert result.exit_code == 1, result.output
+        assert "external/global" in result.output
+        assert git_hook.read_bytes() == git_before
+        assert settings_file.read_bytes() == before
+
+    @pytest.mark.parametrize("unreadable", ["git", "claude"])
+    def test_combined_unreadable_target_preserves_both(self, test_repo, monkeypatch, unreadable):
+        runner = CliRunner()
+        assert runner.invoke(hook, ["install", "--git", "--repo", str(test_repo)]).exit_code == 0
+        git_hook = test_repo / ".git" / "hooks" / "commit-msg"
+        git_before = git_hook.read_bytes()
+        settings_file = test_repo / ".claude" / "settings.json"
+        settings_file.parent.mkdir()
+        settings_file.write_text(json.dumps(self.generated_settings()), encoding="utf-8")
+        settings_before = settings_file.read_bytes()
+        read = Path.read_bytes if unreadable == "git" else Path.read_text
+        target = git_hook if unreadable == "git" else settings_file
+        def deny_target(path, *args, **kwargs):
+            if path == target:
+                raise PermissionError(f"Access denied: {path}")
+            return read(path, *args, **kwargs)
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "read_bytes" if unreadable == "git" else "read_text", deny_target)
+            result = runner.invoke(hook, ["uninstall", "--git", "--client", "claude_code", "--repo", str(test_repo)])
+        assert result.exit_code == 1, result.output
+        assert "Access denied" in result.output
+        assert git_hook.read_bytes() == git_before
+        assert settings_file.read_bytes() == settings_before
+
+    @pytest.mark.parametrize("settings_present", [False, True])
+    def test_combined_cleanup_dry_run_success_and_repeat(self, test_repo, settings_present):
+        runner = CliRunner()
+        assert runner.invoke(hook, ["install", "--git", "--repo", str(test_repo)]).exit_code == 0
+        git_hook = test_repo / ".git" / "hooks" / "commit-msg"
+        before = git_hook.read_bytes()
+        settings_file = test_repo / ".claude" / "settings.json"
+        if settings_present:
+            settings_file.parent.mkdir()
+            settings_file.write_text(json.dumps(self.generated_settings()), encoding="utf-8")
+        settings_before = settings_file.read_bytes() if settings_present else None
+        args = ["uninstall", "--git", "--client", "claude_code", "--repo", str(test_repo)]
+        result = runner.invoke(hook, args + ["--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert git_hook.read_bytes() == before
+        assert (settings_file.read_bytes() if settings_file.exists() else None) == settings_before
+        result = runner.invoke(hook, args)
+        assert result.exit_code == 0, result.output
+        assert not git_hook.exists()
+        assert not settings_file.exists()
+        assert runner.invoke(hook, args).exit_code == 0
+
     @pytest.mark.parametrize("flags", [[], ["--dry-run"], ["--git"]])
     def test_unqualified_install_preserves_everything(self, test_repo, flags):
         settings_file = test_repo / ".claude" / "settings.json"
