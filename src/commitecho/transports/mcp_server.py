@@ -69,6 +69,8 @@ class RecordDecisionsInput(BaseModel):
             "Evidence items to persist. Each must have: kind, origin, content or locator. "
             "Optional evidence_id lets decisions and alternatives reference same-call evidence; "
             "the response returns every generated evidence ID. "
+            "For evidence you author, set client to your active client identifier; "
+            "it is not inherited from begin_change. "
             "Kinds: discussion_summary, test_result, code_observation, source_excerpt, "
             "external_artifact. Agent submissions use origin: agent_reported; "
             "developer_attestation and stronger origins require independent confirmation."

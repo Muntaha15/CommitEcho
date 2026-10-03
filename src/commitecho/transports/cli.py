@@ -820,6 +820,16 @@ def setup(
     else:
         click.echo("\nSetup complete.")
 
+    if "claude_code" in target_client_ids:
+        when = "After applying setup" if dry_run else "Next"
+        click.echo(
+            f"\n{when}: open Claude Code in this repository, complete workspace trust "
+            "and approve the project commitecho MCP server, then start a fresh session/reload. "
+            "Call get_status and compare head_oid with git rev-parse HEAD. "
+            "For unattended approval, see README's Claude Code section for "
+            "enabledMcpjsonServers in .claude/settings.local.json; setup does not change approvals."
+        )
+
 
 # ---------------------------------------------------------------------------
 # check-message
@@ -1201,7 +1211,7 @@ def plugin(
       ├── .mcp.json
       └── skills/commitecho/SKILL.md
     """
-    from commitecho.integrations.profiles import SKILL_TEMPLATE
+    from commitecho.integrations.profiles import SKILL_TEMPLATE, is_known_generated_skill
 
     git = _resolve_repo(repo)
     wt = Path(git.repo_info.worktree_dir)
@@ -1283,6 +1293,8 @@ def plugin(
         if not fpath.is_file():
             raise click.ClickException(f"Expected a file at '{fpath}'; nothing was written.")
         existing = fpath.read_text(encoding="utf-8")
+        if fpath == skill_file and is_known_generated_skill(existing):
+            continue
         allowed = {content}
         if fpath == mcp_file:
             for runtime in (["commitecho", "serve"], [Path(sys.executable).as_posix(), "-m", "commitecho", "serve"]):

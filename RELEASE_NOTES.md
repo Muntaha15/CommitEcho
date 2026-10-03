@@ -18,16 +18,44 @@ All live MCP tests ran. No new dependency or storage migration was introduced.
 Later 2026-10-03 fixture runs add versioned evidence: interactive Codex CLI
 and Antigravity IDE completed capture, exact verification, process restart,
 and fresh-process recall after explicit indexing. See [Codex results](CODEX_LIVE_TEST.md)
-and [Antigravity results](ANTIGRAVITY_LIVE_TEST.md). The canonical skill is now
-version 4 and requires indexing before recall; the portable plugin example uses
+and [Antigravity results](ANTIGRAVITY_LIVE_TEST.md). The canonical skill at that point was
+version 4 and required indexing before recall; the portable plugin example used
 the same skill. Raw sessions and fixture repositories remain local.
 
-Final development-checkout validation: **241 passed, 1 skipped in 362.22
+Prior development-checkout validation: **241 passed, 1 skipped in 362.22
 seconds** using the project Python with all live MCP checks enabled, including
 the parametrized restart lifecycle test for Codex and Antigravity. The skip
 requires Windows directory-symlink permission. Package/CLI version metadata,
 portable plugin generation, canonical skill content, and ignore rules also
 passed their checks.
+
+The supplied [Claude Code UAT report](CLAUDE_CODE_UAT_REPORT.md) records 12
+passing Windows CLI 2.1.286 print-mode checks with skill v4 and local approval,
+including organic activation and fresh-process recall. Its reported 242-test
+result and source baseline have not been independently reproduced here; see
+the capability ledger for scope and the baseline discrepancy.
+
+Our independent follow-up adds Claude to the generic stdio restart regression,
+documents the observed `pending` status, and prints setup approval guidance
+without editing approval settings. Shared skill v5 clarifies known session
+metadata and explicit evidence client attribution. Setup and plugin regeneration
+recognize exact older skill templates while preserving custom content. The
+fresh-clone evidence regression now checks index fallback and retained provenance.
+No storage migration or dependency was added. Live skill v5 adherence,
+interactive approval, cross-client handoff, plugin loading, and hooks remain
+pending; Claude is not on PATH in this follow-up environment.
+
+Independent follow-up validation on `703387e` plus working-tree changes:
+**269 passed, 1 skipped in 366.47 seconds**, using Windows, Python 3.12.14,
+MCP SDK 2.2.0, and Git 2.49.0.windows.1. All live MCP handshakes ran. The skip
+is the existing Windows directory-symlink permission test. These automated
+results do not qualify the pending native client scenarios.
+
+Windows symlink follow-up (2026-10-03): the user enabled Developer Mode and
+reran `test_all_client_preflight_rejects_symlink_escaping_repository` in Git Bash,
+reporting **1 passed in 6.00 seconds**. The earlier skip resulted from missing
+symlink-creation privilege (WinError 1314). This is a separate targeted result;
+the full suite has not been rerun since enabling Developer Mode.
 
 ## v0.1.0 - 2026-10-01
 

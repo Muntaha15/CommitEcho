@@ -118,7 +118,7 @@ def test_evidence_links_survive_prepare_and_clone(tmp_path):
         change_id=change["change_id"], expected_revision=0, operation_id="capture",
         decisions=[decision],
         evidence=[{"evidence_id": evidence_id, "kind": "test_result", "origin": "agent_reported",
-                   "content": "retry produced one result"}],
+                   "client": "claude_code", "content": "retry produced one result"}],
     )
     assert result["evidence_ids"] == [evidence_id]
 
@@ -141,11 +141,20 @@ def test_evidence_links_survive_prepare_and_clone(tmp_path):
     clone = tmp_path / "clone"
     subprocess.run(["git", "clone", str(repo), str(clone)], check=True, capture_output=True)
     clone_git, clone_drafts, clone_index = _open_services(clone)
+    assert clone_drafts.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 0
     _index_commits(clone, clone_git, clone_index, _head(clone))
     retrieve = RetrieveService(clone_drafts, clone_index, clone_git)
     found = retrieve.search_history(question="retry")
     assert evidence_id in found["results"][0]["evidence_ids"]
-    assert retrieve.get_evidence(evidence_id=evidence_id)["content"] == "retry produced one result"
+    evidence = retrieve.get_evidence(evidence_id=evidence_id)
+    assert evidence["found"] is True
+    assert evidence["source"] == "index"
+    assert evidence["content"] == "retry produced one result"
+    assert evidence["origin"] == "agent_reported"
+    assert evidence["client"] == "claude_code"
+    assert evidence["record_id"] == prepared["record_id"]
+    assert evidence["commit_oid"] == _head(clone)
+    assert retrieve.get_evidence(evidence_id="missing") == {"found": False, "evidence_id": "missing"}
 
 
 def test_superseding_revision_link_survives_clone(tmp_path):

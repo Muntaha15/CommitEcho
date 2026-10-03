@@ -1,6 +1,6 @@
 ---
 name: commitecho
-version: 4
+version: 5
 description: Capture decisions made during coding tasks, recall rationale from Git history, and prepare verified commit records.
 ---
 
@@ -13,7 +13,7 @@ description: Capture decisions made during coding tasks, recall rationale from G
 
 ## Core concepts and parameters
 - **Mutating operations** (`begin_change`, `record_decisions`, `prepare_commit`) require a caller-generated `operation_id`. Use a new UUID for each distinct operation. Reuse the identical `operation_id` only when retrying an identical payload after a transport failure.
-- **Client identification**: Pass your active client ID in `client` (`"codex"`, `"antigravity"`, `"copilot_vscode"`, or `"claude_code"`). Record actual surface and version separately in `client_version` and `native_session_id`.
+- **Client identification**: Pass your active client ID in `client` (`"codex"`, `"antigravity"`, `"copilot_vscode"`, or `"claude_code"`). Session metadata and each evidence item's `client` are independent; neither is filled from the other.
 - **Revision tracking**: `expected_revision` must strictly match the server's current `revision_counter` (initially returned by `begin_change` as 0, updated by each successful `record_decisions`).
 - **Provenance and evidence**: Any agent-authored summary must specify `origin="agent_reported"`. Never invent unstated alternatives or claim developer confirmation (`developer_confirmed`, `developer_attestation`, and `independent_artifact` origins are rejected at the MCP boundary).
 - **Authorization**: Installing or loading this skill does not imply permission to make Git commits; follow normal project authorization.
@@ -22,6 +22,8 @@ description: Capture decisions made during coding tasks, recall rationale from G
 
 1. **Open or resume change**:
    - Call `begin_change` with `title`, `client` set to your active agent identifier (`"codex"`, `"antigravity"`, `"copilot_vscode"`, or `"claude_code"`), and a new UUID `operation_id`.
+   - Include the actual `client_version` and `native_session_id` when available; omit unknown values or use null. The native ID belongs to the client session, not the CommitEcho `session_id` returned by this call. Never guess these values or put a surface name in either field.
+   - Example (substitute your active client and observed values): `begin_change(title="Fix duplicate requests", client="claude_code", client_version="<observed-version>", native_session_id="<known-native-session-id>", operation_id="<new-uuid>")`. Omit the two optional metadata fields when unavailable.
    - Save the returned `change_id`, `session_id`, and `revision_counter`.
 
 2. **Record decisions and alternatives**:
@@ -29,7 +31,8 @@ description: Capture decisions made during coding tasks, recall rationale from G
    - Pass `change_id`, `expected_revision` (matching current `revision_counter`), and a new UUID `operation_id`.
    - For each decision, provide `problem`, `choice`, `rationale`, and optional `predecessor_revision_ids`, `code_scope`, and `disposition` (`"selected"`, `"rejected"`, `"proposed"`).
    - Only list alternatives that were actually discussed.
-   - For agent-generated evidence items, set `origin="agent_reported"`.
+   - For evidence you author, set `origin="agent_reported"` and `client` to your active client ID, even when resuming a change started by another client. Preserve the original client when referencing existing evidence.
+   - Example evidence item for `record_decisions`: `{"evidence_id":"<new-uuid>", "kind":"test_result", "origin":"agent_reported", "client":"claude_code", "content":"<actual observed test result>"}`. Reference its `evidence_id` in the relevant decision's or alternative's `evidence_ids` so preparation includes it.
    - Save the returned `revision_ids` and `evidence_ids`, and update `expected_revision` to the returned `revision_counter`.
 
 3. **Stage code, prepare, commit, and verify**:

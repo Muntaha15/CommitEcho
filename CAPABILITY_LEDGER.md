@@ -11,7 +11,7 @@ See [the implementation review](MULTI_CLIENT_INTEGRATION_REVIEW.md).
 - Available Codex CLI reports `0.159.0-alpha.12.1`. This is an inventory
   observation, not a CLI workflow or native-hook acceptance run. No minimum
   supported client version is inferred from it.
-- Claude Code executable is unavailable. Copilot and Antigravity revised
+- Claude Code executable was unavailable during the initial repair review. Copilot and Antigravity revised
   discovery/event acceptance were not run during the initial repair review. No POSIX runtime
   acceptance was performed.
 - Follow-up [Codex live test](CODEX_LIVE_TEST.md): interactive CLI capture,
@@ -23,17 +23,42 @@ See [the implementation review](MULTI_CLIENT_INTEGRATION_REVIEW.md).
   exact verification, indexing, process restart, and fresh-process recall
   passed using the generated Antigravity profile in a separate fixture with
   spaces. Automated protocol restart tests pass for Antigravity alongside Codex.
+- Supplied [Claude Code UAT report](CLAUDE_CODE_UAT_REPORT.md): CLI 2.1.286,
+  model `claude-opus-5-5`, Windows 11 x64, Python 3.12.10, MCP SDK 2.3.0,
+  Git 2.42.0.windows.2, skill v4. Reports 12 passing print-mode checks, organic
+  skill activation, local approval, exact verification, indexing, and fresh-process
+  recall. Its `242 passed, 1 skipped` result belongs to that external run; raw
+  transcripts are not present here. The reported base `69df403` declares v0.1.0,
+  so the exact tested working-tree state remains unverified. Only the two reports
+  were transferred; our follow-up implementation is independent.
 - Baseline full suite: 179 passed in 274.90 seconds, including real stdio tests.
   These passing tests did not cover the reproduced preservation/gate failures.
 - Repaired full suite: **238 passed, 1 skipped in 341.08 seconds**. The skip is
   directory-symlink creation requiring unavailable Windows permission. All live
   MCP handshakes ran; no protocol timeout was increased. The run used the project
   environment with network/local-socket permission and isolated Git fixtures.
-- Final `0.1.1.dev0` checkout: **241 passed, 1 skipped in 362.22 seconds**,
+- Prior `0.1.1.dev0` checkout: **241 passed, 1 skipped in 362.22 seconds**,
   including the development-version plugin regression, parametrized restart
   lifecycle test across Codex and Antigravity, and all live MCP checks.
   The same Windows directory-symlink permission test skipped. Package/CLI
   metadata and portable plugin/skill consistency checks passed.
+
+- Independent UAT follow-up on base `703387e` plus working-tree changes:
+  **269 passed, 1 skipped in 366.47 seconds**, Windows, Python 3.12.14,
+  MCP SDK 2.2.0, Git 2.49.0.windows.1, skill v5. All live MCP handshakes ran;
+  the existing directory-symlink permission test skipped. This run includes
+  Claude in the generic restart regression, exact skill upgrades, approval
+  preservation, plugin skill migration, and fresh-clone evidence provenance.
+  Claude is unavailable locally, so no revised native agent UAT is claimed.
+- Windows symlink follow-up, 2026-10-03: the user enabled Developer Mode and
+  reported **1 passed in 6.00 seconds** for
+  `test_all_client_preflight_rejects_symlink_escaping_repository` in Git Bash.
+  A prior isolated probe reproduced WinError 1314 (required privilege missing).
+  Developer Mode allowed the fixture symlink to be created and the setup
+  containment assertions to run. This resolves the skipped check in the user's
+  environment; the earlier full-suite result remains 269 passed, 1 skipped.
+  Git Bash command:
+  `./.venv/Scripts/python.exe -m pytest -q -rs tests/integration/test_setup.py::test_all_client_preflight_rejects_symlink_escaping_repository`.
 
 ## Client matrix
 
@@ -42,7 +67,7 @@ See [the implementation review](MULTI_CLIENT_INTEGRATION_REVIEW.md).
 | Codex local | `.codex/config.toml`; `.agents/skills/commitecho/SKILL.md`; root `AGENTS.md` | Generated-command stdio tests; connected tools in this review chat | Interactive CLI 0.159.0-alpha.12.1 capture and fresh-process recall passed on Windows. Automatic skill discovery, unattended/cloud/native events, and cross-client handoff pending. `AGENTS.override.md` can mask activation. |
 | Antigravity IDE | `.agents/mcp_config.json`; shared `.agents` skill; `.agents/rules/commitecho.md` | Generated-command stdio tests; live IDE 1.107.0 report | Native discovery, capture, verification, indexing, process restart, and fresh-process recall passed on Windows. CLI is a separate untested surface; native hooks/cross-client pending. |
 | Copilot VS Code | `.vscode/mcp.json`; shared `.agents` skill; `.github/copilot-instructions.md` | Generated-command stdio tests | Interactive discovery/workflow pending. Local versus Agent Host/native harness not qualified. |
-| Claude Code | `.mcp.json`; `.claude/skills/commitecho/SKILL.md`; `CLAUDE.md` | Generated-command stdio tests; server reads documented `CLAUDE_PROJECT_DIR` | Interactive project approval, discovery, workflow, plugin loading, and native events pending; client unavailable. |
+| Claude Code | `.mcp.json`; `.claude/skills/commitecho/SKILL.md`; `CLAUDE.md` | Generated-command stdio and restart tests; server reads documented `CLAUDE_PROJECT_DIR` | Supplied Windows CLI 2.1.286 print-mode report passes organic skill activation, capture, exact verification, indexing, restart, and recall with local approval. Interactive approval, skill v5 adherence, plugins, portable PATH launch, POSIX, native events, and cross-client handoff remain pending. |
 
 The suite asserts the eight tool names and intended worktree independently of
 the client applications. It exercises capture/prepare/commit/verify/restart/
@@ -56,6 +81,13 @@ stay local. Existing user launch overrides, TOML comments, custom skills, and
 instructions are preserved. Explicit server regeneration refreshes launch
 fields. All selected configurations are preflighted; dry-run opens no stores.
 Only exact recognized generated skill content is migrated.
+
+Skill v5 adds explicit per-evidence client attribution and optional known native
+session metadata. Exact generated v4 skills are recognized for setup and plugin
+regeneration; custom skills stay protected. Evidence is not assigned a client
+from a change's contributing sessions. Setup prints Claude approval guidance
+without modifying approval settings; the README records the version-specific
+`pending` observation and requires a callable `get_status` readiness check.
 
 Automatic portable setup is limited to Claude's documented server project-root
 contract. Other clients require an explicit launcher/root contract. Portable
@@ -100,7 +132,8 @@ installed package and dependencies. Regeneration preflights ownership and
 preserves customized/unrelated files. No hooks ship in the plugin.
 
 Protocol smoke tests are separate from `claude plugin validate` and an actual
-plugin-loaded project session, both still pending because Claude is unavailable.
+plugin-loaded project session, both still pending. Claude is not on PATH in the
+local follow-up environment; the supplied external UAT did not test plugins.
 The smoke tests use the installed editable package without `PYTHONPATH`;
 revised standalone-wheel installation and offline distribution were not tested.
 Disable project CommitEcho registration while enabling the plugin to avoid

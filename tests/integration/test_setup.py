@@ -244,7 +244,7 @@ def test_setup_command_launches_mcp_server(tmp_path: Path, client_id: str) -> No
     assert (tmp_path / ".git" / "commitecho" / "drafts.sqlite").exists()
 
 
-@pytest.mark.parametrize("client_id", ["codex", "antigravity"])
+@pytest.mark.parametrize("client_id", ["codex", "antigravity", "claude_code"])
 def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path, client_id: str) -> None:
     """Capture a tested code change, commit it, and recall it through a new server."""
     from mcp import ClientSession, StdioServerParameters
@@ -700,20 +700,23 @@ def test_skill_template_contains_version_header() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("version", [2, 3])
-def test_stale_skill_triggers_update(tmp_path: Path, version: int) -> None:
+@pytest.mark.parametrize("version", [2, 3, 4])
+@pytest.mark.parametrize("client_id", ["codex", "claude_code"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_stale_skill_triggers_update(tmp_path: Path, version: int, client_id: str, dry_run: bool) -> None:
     """If the installed skill differs from the canonical template, generate must [update] it."""
-    profile = ALL_PROFILES["codex"]
+    profile = ALL_PROFILES[client_id]
     skill_file = tmp_path / profile.skill_path
     skill_file.parent.mkdir(parents=True, exist_ok=True)
     skill_file.write_text(_legacy_skill(version), encoding="utf-8")
 
     gen = _make_generator(tmp_path)
-    changes = gen.generate(profile, dry_run=False)
+    changes = gen.generate(profile, dry_run=dry_run)
 
     update_changes = [c for c in changes if "[update]" in c and "skill" in c]
     assert update_changes, f"Expected an [update] skill action, got: {changes}"
-    assert skill_file.read_text(encoding="utf-8") == _SKILL_TEMPLATE
+    expected = _legacy_skill(version) if dry_run else _SKILL_TEMPLATE
+    assert skill_file.read_text(encoding="utf-8") == expected
 
 
 # ---------------------------------------------------------------------------
@@ -721,10 +724,10 @@ def test_stale_skill_triggers_update(tmp_path: Path, version: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_skill_version_4_and_neutral_guidance() -> None:
-    """Skill must be version 4 with neutral client identification and explicit boundaries."""
-    assert SKILL_VERSION == 4
-    assert 'version: 4' in _SKILL_TEMPLATE
+def test_skill_version_5_and_neutral_guidance() -> None:
+    """Skill must be version 5 with neutral client identification and explicit boundaries."""
+    assert SKILL_VERSION == 5
+    assert 'version: 5' in _SKILL_TEMPLATE
     # No hardcoded antigravity default in client parameter or begin_change call
     assert 'client="antigravity" (or' not in _SKILL_TEMPLATE
     assert 'client="antigravity",' not in _SKILL_TEMPLATE
@@ -775,12 +778,13 @@ def test_legacy_skill_migration_and_custom_preservation(tmp_path: Path) -> None:
     assert custom_legacy.exists(), "Custom legacy skill must not be deleted"
 
 
-def test_custom_installed_skill_preserved_with_conflict(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", [3, 4])
+def test_custom_installed_skill_preserved_with_conflict(tmp_path: Path, version: int) -> None:
     """A customized skill in .agents/skills/commitecho/SKILL.md must not be overwritten."""
     profile = ALL_PROFILES["antigravity"]
     skill_file = tmp_path / profile.skill_path
     skill_file.parent.mkdir(parents=True, exist_ok=True)
-    custom_text = _legacy_skill(3) + "\n# Custom team decisions\nDo not overwrite.\n"
+    custom_text = _legacy_skill(version) + "\n# Custom team decisions\nDo not overwrite.\n"
     skill_file.write_text(custom_text, encoding="utf-8")
 
     gen = _make_generator(tmp_path)
@@ -839,6 +843,41 @@ def test_setup_preflight_validations(tmp_path: Path) -> None:
     gen_normal = _make_generator(tmp_path)
     with pytest.raises(ValueError, match="must be a mapping/table"):
         gen_normal.generate(profile)
+
+
+@pytest.mark.parametrize("client_id", [None, "claude_code", "codex"])
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("existing_settings", [False, True])
+def test_setup_claude_hint_preserves_approval_settings(
+    tmp_path: Path, client_id: str | None, dry_run: bool, existing_settings: bool,
+) -> None:
+    from click.testing import CliRunner
+    from commitecho.transports.cli import setup
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    settings = tmp_path / ".claude" / "settings.local.json"
+    original = b'{"enabledMcpjsonServers":["other"],"disabledMcpjsonServers":["commitecho"]}\n'
+    if existing_settings:
+        settings.parent.mkdir()
+        settings.write_bytes(original)
+    args = ["--repo", str(tmp_path)]
+    if client_id:
+        args += ["--client", client_id]
+    if dry_run:
+        args.append("--dry-run")
+    result = CliRunner().invoke(setup, args)
+    assert result.exit_code == 0, result.output
+    assert ("enabledMcpjsonServers" in result.output) == (client_id != "codex")
+    if client_id != "codex":
+        assert "get_status" in result.output
+        assert ("After applying setup:" if dry_run else "Next:") in result.output
+    if existing_settings:
+        assert settings.read_bytes() == original
+    else:
+        assert not settings.exists()
+    if dry_run:
+        assert not (tmp_path / ".mcp.json").exists()
+        assert not (tmp_path / ".git" / "commitecho").exists()
 
 
 def test_cli_setup_dry_run_creates_no_databases(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ Preserve the decisions behind code changes and recall them through your coding a
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.1.1 in development (`0.1.1.dev0`); v0.1.0 is the published release.** Four local client configuration profiles are available. On 2026-10-03, interactive Codex and Antigravity IDE completed capture, commit, verification, indexing, process restart, and recall in a fresh process. Claude Code and Copilot interactive acceptance, native lifecycle hooks, and plugin loading remain pending. See the [Codex results](CODEX_LIVE_TEST.md), [Antigravity results](ANTIGRAVITY_LIVE_TEST.md), and [capability ledger](CAPABILITY_LEDGER.md).
+**Status: v0.1.1 in development (`0.1.1.dev0`); v0.1.0 is the published release.** Four local client configuration profiles are available. On 2026-10-03, interactive Codex and Antigravity IDE completed capture, commit, verification, indexing, process restart, and recall in a fresh process. A supplied Claude Code CLI report records the same workflow plus organic skill activation in Windows print mode with local approval. Claude and Copilot interactive acceptance, native lifecycle hooks, and plugin loading remain pending. See the [Codex results](CODEX_LIVE_TEST.md), [Antigravity results](ANTIGRAVITY_LIVE_TEST.md), [Claude Code report](CLAUDE_CODE_LIVE_TEST.md), and [capability ledger](CAPABILITY_LEDGER.md).
 
 ## Install
 
@@ -260,6 +260,31 @@ commitecho setup --client claude_code
 | `CLAUDE.md` | Activation instruction block (appended) |
 
 Interactive Claude project sessions ask for approval of project-local MCP servers; unattended and SDK hosts have different loading controls. After setup, approve the server, start a fresh session/reload, and check tools and skill discovery. For shared configurations, use `commitecho setup --client claude_code --portable` with the package installed on PATH. File location alone does not make absolute launch paths portable. See [Claude MCP documentation](https://code.claude.com/docs/en/mcp).
+
+For an unattended run in a trusted workspace, explicitly opt in to this server
+by merging the following into your untracked `.claude/settings.local.json`,
+preserving other settings and existing server entries:
+
+```json
+{"enabledMcpjsonServers": ["commitecho"]}
+```
+
+This local file does not bypass workspace trust. Complete Claude's trust dialog
+first; a `disabledMcpjsonServers` entry can still reject the server. Setup prints
+guidance but never writes approval settings. See Claude's
+[approval and trust rules](https://code.claude.com/docs/en/mcp#project-server-approvals-and-workspace-trust).
+
+The [supplied UAT report](CLAUDE_CODE_UAT_REPORT.md) observed Claude CLI 2.1.286
+reporting `pending` after local approval even though tools worked later in the
+session. Check the effective server binding and make a real `get_status` call;
+compare `head_oid` with `git rev-parse HEAD` in the intended repository. A startup
+status alone is insufficient. If the call fails, inspect trust, approval, and
+launch errors. `doctor` checks static configuration, not live client connectivity.
+
+Shared skill v5 asks agents to supply known client session metadata and to label
+each evidence item they author with their active client. Unknown metadata stays
+unset. Setup upgrades exact generated older skills and preserves custom content;
+the plugin generator uses the same recognition rule for its skill asset.
 
 ---
 

@@ -135,6 +135,26 @@ class TestClaudeCodeSessionHook:
 
 
 class TestPluginGenerator:
+    @pytest.mark.parametrize("customized", [False, True])
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_v4_skill_upgrade_preserves_custom_content(self, test_repo, customized, dry_run):
+        from commitecho.integrations.profiles import SKILL_TEMPLATE
+
+        runner = CliRunner()
+        args = ["--repo", str(test_repo)]
+        assert runner.invoke(plugin, args).exit_code == 0
+        out = test_repo / "commitecho-plugin"
+        skill = out / "skills" / "commitecho" / "SKILL.md"
+        old = (Path(__file__).parents[1] / "fixtures" / "skill-v4.md").read_text(encoding="utf-8")
+        skill.write_text(old + ("\nTeam customization.\n" if customized else ""), encoding="utf-8")
+        before = {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        result = runner.invoke(plugin, args + ["--portable"] + (["--dry-run"] if dry_run else []))
+        assert (result.exit_code == 0) == (not customized), result.output
+        if customized or dry_run:
+            assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == before
+        else:
+            assert skill.read_text(encoding="utf-8") == SKILL_TEMPLATE
+
     @pytest.mark.parametrize("asset", [".claude-plugin/plugin.json", ".mcp.json", "skills/commitecho/SKILL.md"])
     def test_custom_asset_preflight_preserves_all_files(self, test_repo, asset):
         runner = CliRunner()

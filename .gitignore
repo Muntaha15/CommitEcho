@@ -9,6 +9,7 @@ dist/
 tests/fixtures/repos/
 tests/fixtures/fixture_manifest.json
 AUDIT_ACTIONS.md
+/CLAUDE_CODE_UAT_ACTION_PLAN.md
 docs/
 
 # Agent client configs generated during local setup/testing

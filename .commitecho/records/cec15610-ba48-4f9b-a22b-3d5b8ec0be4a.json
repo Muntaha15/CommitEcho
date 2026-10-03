@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "record_id": "cec15610-ba48-4f9b-a22b-3d5b8ec0be4a",
+  "change_id": "458892bb-9025-4b17-baf9-1a8c140c7041",
+  "summary": "Clarify Claude setup and evidence attribution, preserve skill upgrades, and qualify UAT follow-up coverage.",
+  "prepared_for": {
+    "parent_oid": "703387ec5707a9fc9f309abd56e86a3e06511b86",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "17bb93f1217e497ef718e9beb3b99ef3f572e3bafe4624b265ff91e8bc8568f6"
+  },
+  "decisions": [
+    {
+      "decision_id": "31509615-0ff4-4058-82e4-7d327c2a716f",
+      "revision_id": "c62db3e8-1c43-41b2-a8d9-f4d3d032f939",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Claude UAT reported confusing setup status and missing evidence/client session attribution.",
+      "choice": "Implement setup guidance, explicit skill v5 attribution, and existing regression extensions; preserve approval settings and avoid inferred evidence clients.",
+      "rationale": "User authorized the UAT plan implementation with subagent audit. Session metadata and evidence client are separate; multiple sessions may contribute to a change. Explicit attribution preserves the existing model while improving guidance. A real get_status call validates readiness beyond static configuration.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/transports/cli.py",
+          "src/commitecho/transports/mcp_server.py",
+          "src/commitecho/integrations/skill.md",
+          "src/commitecho/integrations/profiles.py",
+          "commitecho-plugin/skills/commitecho/SKILL.md",
+          "tests/integration/test_setup.py",
+          "tests/integration/test_history_retrieval.py",
+          "tests/integration/test_plugin_and_lifecycle.py",
+          "tests/fixtures/skill-v4.md",
+          "README.md",
+          "CAPABILITY_LEDGER.md",
+          "RELEASE_NOTES.md",
+          "CLAUDE_CODE_UAT_ACTION_PLAN.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-03T11:56:44.209993Z"
+    },
+    {
+      "decision_id": "98728951-71ba-4d0b-b1b0-6af1f9a108e6",
+      "revision_id": "28619733-51d0-4011-b0fc-1c11d3dfb461",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Bumping the canonical skill would otherwise make existing stock v4 plugin skills look customized during regeneration.",
+      "choice": "Reuse the exact generated-skill recognizer in plugin preflight and preserve the original v4 template/hash.",
+      "rationale": "The auditor identified this upgrade regression. Shared recognition fixes setup and plugin upgrade behavior without accepting customized templates or relaxing manifest ownership checks.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/transports/cli.py",
+          "src/commitecho/integrations/profiles.py",
+          "tests/integration/test_plugin_and_lifecycle.py",
+          "tests/fixtures/skill-v4.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-03T11:56:44.209993Z"
+    },
+    {
+      "decision_id": "c53ce895-c637-4efd-885b-b86f9d758626",
+      "revision_id": "47e8b6c9-ef80-4e67-be60-73dc199f1efc",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "The implemented UAT follow-up needs verified automated results and accurately bounded client acceptance claims.",
+      "choice": "Retain the implementation with passing full-suite validation and explicitly leave revised native Claude scenarios pending.",
+      "rationale": "Project Python full suite completed with 269 passed and one existing Windows symlink permission skip. All live MCP handshakes ran. Claude is not installed on PATH or usual local install locations, so automated protocol tests cannot establish agent adherence or native approval behavior.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "CLAUDE_CODE_UAT_ACTION_PLAN.md",
+          "CAPABILITY_LEDGER.md",
+          "RELEASE_NOTES.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "claude-uat-followup-full-suite-20261003"
+      ],
+      "captured_at": "2026-10-03T13:55:26.499576Z"
+    },
+    {
+      "decision_id": "45e636af-f6c0-401f-96fc-d0e5089b50c4",
+      "revision_id": "68f0d7c8-072d-4d22-9098-ccddcdf8b4b8",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Commit the reviewed UAT follow-up while keeping unnecessary local planning material out of Git and documenting the resolved Windows skip.",
+      "choice": "Ignore only the local UAT action plan; commit the referenced source reports and required v4 fixture, and retain explicit skip reasons and the user's targeted Developer Mode pass.",
+      "rationale": "The user authorized this commit and ignoring unnecessary files. README and release notes link to the source reports, and upgrade tests load the v4 fixture, so these are required. The action plan is local working material. The user supplied a separate 1-pass targeted result after enabling Developer Mode; preserve the earlier full-suite count and provenance.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          ".gitignore",
+          "AGENTS.md",
+          "CAPABILITY_LEDGER.md",
+          "RELEASE_NOTES.md",
+          "CLAUDE_CODE_LIVE_TEST.md",
+          "CLAUDE_CODE_UAT_REPORT.md",
+          "tests/fixtures/skill-v4.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "developer-mode-targeted-rerun-20261003",
+        "claude-uat-followup-full-suite-20261003"
+      ],
+      "captured_at": "2026-10-03T14:41:46.175880Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "claude-uat-followup-full-suite-20261003",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Full suite: .venv/Scripts/python.exe -m pytest -q -ra -p no:cacheprovider --basetemp .test-tmp-uat-full-458892bb. Exit 0, 269 passed, 1 skipped in 366.47s. Skip: tests/integration/test_setup.py:441 directory symlink creation requires permission on this Windows installation. Windows, Python 3.12.14, MCP SDK 2.2.0, Git 2.49.0.windows.1. Required network/local-socket access enabled; live MCP handshakes ran. git diff --check passed. Base 703387e plus uncommitted working-tree implementation.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T13:55:26.499576Z",
+      "verification_method": null
+    },
+    {
+      "evidence_id": "developer-mode-targeted-rerun-20261003",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "User supplied Git Bash terminal output for tests/integration/test_setup.py::test_all_client_preflight_rejects_symlink_escaping_repository: 1 passed in 6.00s, and stated that enabling Windows Developer Mode resolved it. Prior isolated agent probe reproduced WinError 1314, required privilege missing. This user-reported targeted rerun is separate from the recorded full suite with 269 passed and 1 skipped.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T14:41:46.175880Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-03T14:42:30.751416Z"
+}
