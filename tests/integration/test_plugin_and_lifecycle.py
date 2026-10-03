@@ -287,30 +287,103 @@ class TestClaudeCodeSessionHook:
 
 
 class TestPluginGenerator:
+    @pytest.mark.parametrize("portable", [False, True])
+    @pytest.mark.parametrize("old_version,new_version", [
+        ("0.1.0", "0.2.0.dev0"),
+        ("0.1.1.dev0", "0.2.0.dev0"),
+        ("0.2.0.dev0", "0.2.0"),
+    ])
+    def test_stock_manifest_cross_version_upgrade(self, test_repo, tmp_path, monkeypatch, portable, old_version, new_version):
+        runner = CliRunner()
+        out = tmp_path / "plugin outside repository"
+        args = ["--repo", str(test_repo), "--output-dir", str(out), *(["--portable"] if portable else [])]
+        monkeypatch.setattr("importlib.metadata.version", lambda name: old_version)
+        assert runner.invoke(plugin, args).exit_code == 0
+        manifest = out / ".claude-plugin" / "plugin.json"
+        # Keep the existing universal-newline recognition on Windows/POSIX.
+        manifest.write_bytes(manifest.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        before = {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        monkeypatch.setattr("importlib.metadata.version", lambda name: new_version)
+        dry = runner.invoke(plugin, args + ["--dry-run"])
+        assert dry.exit_code == 0, dry.output
+        assert "[update]" in dry.output
+        assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == before
+        result = runner.invoke(plugin, args)
+        assert result.exit_code == 0, result.output
+        assert json.loads(manifest.read_text(encoding="utf-8"))["version"] == new_version.replace(".dev", "-dev.")
+        after = {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        assert all(p == manifest or after[p] == content for p, content in before.items())
+        repeated = runner.invoke(plugin, args)
+        assert repeated.exit_code == 0, repeated.output
+        assert repeated.output.count("[skip]") == 3
+        assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == after
+
     @pytest.mark.parametrize("version", [4, 5])
     @pytest.mark.parametrize("customized", [False, True])
     @pytest.mark.parametrize("dry_run", [False, True])
-    def test_stock_skill_upgrade_preserves_custom_content(self, test_repo, customized, dry_run, version):
+    def test_stock_skill_upgrade_preserves_custom_content(self, test_repo, monkeypatch, customized, dry_run, version):
         from commitecho.integrations.profiles import SKILL_TEMPLATE
 
         runner = CliRunner()
         args = ["--repo", str(test_repo)]
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "0.1.1.dev0")
         assert runner.invoke(plugin, args).exit_code == 0
         out = test_repo / "commitecho-plugin"
         skill = out / "skills" / "commitecho" / "SKILL.md"
         old = (Path(__file__).parents[1] / "fixtures" / f"skill-v{version}.md").read_text(encoding="utf-8")
         skill.write_text(old + ("\nTeam customization.\n" if customized else ""), encoding="utf-8")
         before = {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "0.2.0.dev0")
         result = runner.invoke(plugin, args + ["--portable"] + (["--dry-run"] if dry_run else []))
         assert (result.exit_code == 0) == (not customized), result.output
         if customized or dry_run:
             assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == before
         else:
             assert skill.read_text(encoding="utf-8") == SKILL_TEMPLATE
+            assert json.loads((out / ".claude-plugin" / "plugin.json").read_text())["version"] == "0.2.0-dev.0"
+
+    @pytest.mark.parametrize("mutation", [
+        {"version": None}, {"version": 1}, {"version": ""}, {"version": "0.1"},
+        {"version": "01.1.0"}, {"version": "0.1.1.dev0"}, {"version": "0.1.1-dev.01"},
+        {"version": "0.1.1-rc.1"}, {"version": "0.1.1+custom"}, {"name": "foreign"},
+        {"description": "Team description"}, {"author": {"name": "Custom author"}},
+        {"homepage": "https://example.com"}, {"repository": "https://example.com"},
+        {"extra": True}, "missing-version", "formatting", "missing-newline",
+    ])
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_manifest_upgrade_preserves_custom_metadata(self, test_repo, monkeypatch, mutation, dry_run):
+        runner = CliRunner()
+        args = ["--repo", str(test_repo)]
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "0.1.1.dev0")
+        assert runner.invoke(plugin, args).exit_code == 0
+        out = test_repo / "commitecho-plugin"
+        manifest = out / ".claude-plugin" / "plugin.json"
+        content = manifest.read_text(encoding="utf-8")
+        data = json.loads(content)
+        if isinstance(mutation, dict):
+            data.update(mutation)
+            content = json.dumps(data, indent=2) + "\n"
+        elif mutation == "missing-version":
+            del data["version"]
+            content = json.dumps(data, indent=2) + "\n"
+        elif mutation == "formatting":
+            content = json.dumps(data) + "\n"
+        else:
+            content = content.rstrip("\n")
+        manifest.write_text(content, encoding="utf-8")
+        (out / ".mcp.json").unlink()
+        before = {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "0.2.0.dev0")
+        result = runner.invoke(plugin, args + (["--dry-run"] if dry_run else []))
+        assert result.exit_code != 0, result.output
+        assert "Preserving all files" in result.output
+        assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == before
 
     @pytest.mark.parametrize("asset", [".claude-plugin/plugin.json", ".mcp.json", "skills/commitecho/SKILL.md"])
-    def test_custom_asset_preflight_preserves_all_files(self, test_repo, asset):
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_custom_asset_preflight_preserves_all_files(self, test_repo, monkeypatch, asset, dry_run):
         runner = CliRunner()
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "0.1.1.dev0")
         assert runner.invoke(plugin, ["--repo", str(test_repo)]).exit_code == 0
         out = test_repo / "commitecho-plugin"
         (out / asset).write_text("customized content", encoding="utf-8")
@@ -318,10 +391,29 @@ class TestPluginGenerator:
         if asset == "skills/commitecho/SKILL.md":
             (out / ".mcp.json").unlink()
         before = {str(p.relative_to(out)): p.read_bytes() for p in out.rglob("*") if p.is_file()}
-        res = runner.invoke(plugin, ["--repo", str(test_repo), "--portable"])
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "0.2.0.dev0")
+        res = runner.invoke(plugin, ["--repo", str(test_repo), "--portable", *(["--dry-run"] if dry_run else [])])
         assert res.exit_code != 0
         after = {str(p.relative_to(out)): p.read_bytes() for p in out.rglob("*") if p.is_file()}
         assert after == before
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_upgrade_preserves_different_local_runtime(self, test_repo, monkeypatch, dry_run):
+        runner = CliRunner()
+        args = ["--repo", str(test_repo)]
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "0.1.1.dev0")
+        assert runner.invoke(plugin, args).exit_code == 0
+        out = test_repo / "commitecho-plugin"
+        mcp = out / ".mcp.json"
+        data = json.loads(mcp.read_text(encoding="utf-8"))
+        data["mcpServers"]["commitecho"]["command"] = "/another/runtime/python"
+        mcp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        before = {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "0.2.0.dev0")
+        result = runner.invoke(plugin, args + (["--dry-run"] if dry_run else []))
+        assert result.exit_code != 0, result.output
+        assert "choose an empty output directory" in result.output
+        assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == before
 
     def test_foreign_plugin_manifest_is_preserved(self, test_repo):
         out = test_repo / "commitecho-plugin"

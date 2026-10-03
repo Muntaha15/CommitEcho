@@ -1216,6 +1216,20 @@ def hook_uninstall(
 # ---------------------------------------------------------------------------
 
 
+def _render_plugin_manifest(version: str) -> str:
+    return json.dumps(
+        {
+            "name": "commitecho",
+            "version": version,
+            "description": "Preserve the decisions behind code changes and recall them through your coding agent.",
+            "author": {"name": "CommitEcho Contributors"},
+            "homepage": "https://github.com/Muntaha15/CommitEcho",
+            "repository": "https://github.com/Muntaha15/CommitEcho",
+        },
+        indent=2,
+    ) + "\n"
+
+
 @main.command("plugin")
 @click.option("--output-dir", default=None, help="Directory to generate the Claude plugin into (default: commitecho-plugin in repo root).")
 @click.option("--repo", default=None, help="Path to the Git repository / project root.")
@@ -1264,19 +1278,7 @@ def plugin(
     except importlib.metadata.PackageNotFoundError as exc:
         raise click.ClickException("Install the CommitEcho package before generating a plugin.") from exc
 
-    manifest_content = json.dumps(
-        {
-            "name": "commitecho",
-            "version": pkg_version.replace(".dev", "-dev."),
-            "description": "Preserve the decisions behind code changes and recall them through your coding agent.",
-            "author": {
-                "name": "CommitEcho Contributors",
-            },
-            "homepage": "https://github.com/Muntaha15/CommitEcho",
-            "repository": "https://github.com/Muntaha15/CommitEcho",
-        },
-        indent=2,
-    ) + "\n"
+    manifest_content = _render_plugin_manifest(pkg_version.replace(".dev", "-dev."))
 
     cmd = (
         ["commitecho", "serve"]
@@ -1320,6 +1322,17 @@ def plugin(
         if fpath == skill_file and is_known_generated_skill(existing):
             continue
         allowed = {content}
+        if fpath == manifest_file:
+            try:
+                prior = json.loads(existing)
+            except ValueError:
+                prior = None
+            prior_version = prior.get("version") if isinstance(prior, dict) else None
+            if isinstance(prior_version, str) and re.fullmatch(
+                r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-dev\.(?:0|[1-9][0-9]*))?",
+                prior_version,
+            ):
+                allowed.add(_render_plugin_manifest(prior_version))
         if fpath == mcp_file:
             for runtime in (["commitecho", "serve"], [Path(sys.executable).as_posix(), "-m", "commitecho", "serve"]):
                 allowed.add(json.dumps({"mcpServers": {"commitecho": {"command": runtime[0], "args": runtime[1:]}}}, indent=2) + "\n")
@@ -1348,4 +1361,4 @@ def plugin(
     if dry_run:
         click.echo("\n(dry-run: no files were written)")
     else:
-        click.echo("\nPlugin generated successfully. An installed CommitEcho runtime is required; Claude plugin loading remains unqualified.")
+        click.echo("\nPlugin generated successfully. An installed CommitEcho runtime is required. Validate loading and repository binding in Claude Code before use.")
