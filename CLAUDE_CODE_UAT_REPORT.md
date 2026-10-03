@@ -336,3 +336,149 @@ All raw evidence is kept locally in the ignored folder
 | UAT executed by | Claude Code (automated operator) | PASS, with the scope limits in §2 | 2026-10-03 |
 | Reviewed by | | | |
 | Approved by | | | |
+
+---
+
+## 14. Round 2 conclusion - 2026-10-03
+
+This section consolidates the round 2 reports. Sections 1-13 retain the
+historical round 1 results; the findings below update their status.
+
+### Result and evidence
+
+**PASS with defects:** 15 of 15 acceptance checks passed at commit `4a1478d`
+on branch `multi-client-integration`, CommitEcho `0.1.1.dev0`, skill v5.
+The environment remained Windows 11, Claude Code CLI 2.1.286 in print mode,
+model `claude-opus-5-5`, Python 3.12.10, MCP SDK 2.3.0, and Git 2.42.0.windows.2.
+Verdicts came from recorded tool events across four successful sessions:
+
+| Session | ID | Evidence |
+|---|---|---|
+| Probe | `5cf800b0-7476-4009-9988-0aca7aa16e14` | All eight tools exposed; status returned the fixture state |
+| Capture | `8d6c135e-3505-4a2e-b5d7-5fbaeaab1484` | Unprompted skill use, capture, commit, exact verification, and indexing |
+| Recall | `46acbf84-8209-4e2c-bd37-8b2510c20da3` | Accurate, attributed recall from a new process |
+| Plugin | `7a163631-4d86-4060-afd9-19946a6a274a` | Plugin validation, unprompted skill use, and index-only recall in a fresh clone |
+
+The capture task implemented `chunked(values, size)` and explicitly rejected
+`itertools.batched` to retain Python 3.10 support. It produced commit
+`dab22e75a8fa68867f132023b8519f174ed809fa` and record
+`e7b01429-838d-45dd-bc27-bbbf9904e53c`. Both code paths were covered, generated
+client files stayed unstaged, and verification returned `exact`. The four
+fixture tests ran on Python 3.14.0; Python 3.10 compatibility was not tested.
+
+The plugin passed `claude plugin validate` and loaded via `--plugin-dir` in a
+fresh clone with no `.mcp.json`, `CLAUDE.md`, project skill, or draft database.
+It located the clone through `CLAUDE_PROJECT_DIR`. The operator ran
+`commitecho index` before the read-only session; search and evidence-by-ID
+lookups then returned `source: "index"`. This proves plugin loading and recall,
+not capture through the plugin or automatic indexing.
+
+### Status of earlier findings
+
+| ID | Round 2 conclusion |
+|---|---|
+| O-1 | Partly resolved: `init` reported `connected` in all four sessions, while CLI `list`/`get` still displayed "Pending approval". This is reported as Claude Code behavior; actual tool calls establish availability. |
+| O-2 | Fixed: `client_version: "2.1.286"` was supplied and both evidence items retained `client: "claude_code"` through indexing. An unknown `native_session_id` was omitted as skill v5 permits. |
+| O-3 | Closed: evidence-by-ID retrieval succeeded from the fresh clone's index alone. |
+| O-4 | Fixed: setup printed trust, approval, and reload guidance, including `enabledMcpjsonServers`, without changing approval settings. |
+
+### New defects and required follow-up
+
+| ID | Severity | Finding | Recommended action |
+|---|---|---|---|
+| D-1 | High, data integrity | `DecisionInput.alternatives` is `list[dict[str, Any]]`, leaving fields unspecified. Input `{description, reason}` failed with `{"error": "'choice'"}`. The retry `{choice, rationale}` succeeded but silently discarded `rationale`, committing `reason: null`. | Define `AlternativeInput` with `choice`, `disposition`, `reason`, and `evidence_ids`, forbid extra fields, and use it in `DecisionInput`. Document an alternative example in the next skill version and test invalid-key rejection and reason preservation. This is a shared contract issue affecting every client. |
+| D-2 | Medium | The catch-all MCP error handler returned only the exception message, so the failure appeared as `'choice'`. | Validate inputs before capture and improve fallback exception/tool context. |
+| D-3 | Low | Piped or redirected Windows `commitecho plugin --help` crashed with a cp1252 `UnicodeEncodeError` on tree characters; main help also showed an encoding artifact. | Prefer ASCII CLI help text or configure UTF-8 output. `PYTHONIOENCODING=utf-8` worked as a workaround. |
+
+The rejection reason survived only in a separate linked evidence item, which
+recall used while explicitly reporting the null structured field. That recovery
+does not remove D-1. `verify_commit: exact` succeeded despite this loss, so
+commit verification alone does not establish faithful capture of submitted data.
+
+**Review conclusion:** accept the demonstrated round 1 fixes and the tested
+workflow, but retain D-1 as a blocker for reliable alternatives capture. The
+15/15 workflow result is not a clean data-integrity sign-off. Strengthen
+UAT-08 to require preservation of the alternative's choice, reason, and evidence
+through capture, commit, indexing, and recall. After remediation, run the full
+regression suite and repeat live capture/recall with a rejected alternative.
+This is a recommendation, not a recorded reviewer or approver sign-off.
+
+### Regression and remaining scope
+
+The round 2 full-suite baseline at `4a1478d` was **269 passed, 1 skipped** in
+136.04 s, with no MCP timeouts. No product code changed during that round.
+This documentation consolidation did not rerun the suite.
+
+Skipped: `test_all_client_preflight_rejects_symlink_escaping_repository`
+(`tests/integration/test_setup.py:441`). The observed process lacked permission
+to create a directory symlink (WinError 1314). Enable Windows Developer Mode
+or use an elevated shell, then rerun. AGENTS.md records an isolated pass on
+2026-10-03 after Developer Mode was enabled; it does not alter this full-suite
+count.
+
+Still untested: interactive project-server approval, `--portable` launch,
+SessionStart lifecycle hook, Linux/macOS, cross-client handoff, Claude Code IDE
+and desktop surfaces, and capture through the plugin.
+
+Raw evidence remains locally in `.commitecho/claude-live-r2-20261003/`:
+`probe1`, `sessionA`, `sessionB`, and `sessionP` transcripts (`.jsonl`/`.err`),
+`baseline-pytest.txt`, setup/doctor/MCP output, `inspect_transcript.py`, and the
+`fixture repo/`, `plugin fixture/`, and `local-plugin/` directories.
+
+## 15. Remediation - 2026-10-03
+
+The independent remediation starts from `4a1478dbdbb8029cd51e1b92c258b36f2c9c6ea6`
+on `multi-client-integration`. The initial working tree contained only the two
+round 2 report consolidations; those edits are preserved. Validation uses the
+existing project environment: Windows, Python 3.12.14, MCP SDK 2.2.0,
+Git 2.49.0.windows.1, CommitEcho `0.1.1.dev0`, skill v6. The operator is a
+Codex desktop chat; its client version and native session ID are unavailable.
+
+| Finding | Implementation and regression evidence | Live qualification |
+|---|---|---|
+| D-1 | Fixed: typed MCP alternatives require `choice` and forbid unknown keys. Shared capture validates the complete alternative. Malformed `{description, reason}` and `{choice, rationale}` are rejected; mixed requests roll back evidence, revisions, operation success, and revision counter. Corrected retries succeed. Valid reasons and evidence links survive preparation, exact commit verification, indexing, restart, and Git-only clone recall. Omitted reasons remain null. | Revised Claude project/plugin capture pending. |
+| D-2 | Fixed: unexpected errors retain `is_error=True` and `error`, with `exception_type` and `tool` in the response and stderr. Validation errors and `INDEX_CHANGED` retain their separate handling. Forced-error regression checks context and continued server usability. | No change to the MCP protocol or Claude approval display. |
+| D-3 | Fixed: root/plugin help uses ASCII. Subprocess tests redirect output with `PYTHONIOENCODING=cp1252` and require readable help, exit 0, and no traceback. | No UTF-8 workaround required. |
+
+Skill v6 supplies the correct rejected-alternative example and distinguishes
+decision `rationale` from alternative `reason`. Canonical and plugin skills
+match. The exact stock v5 fixture/hash is preserved; project and plugin upgrades
+retain customized content and older upgrade coverage. No dependency, storage
+migration, or historical-record correction was introduced.
+
+**UAT-08 strengthened criterion:** a supplied rejected alternative's `choice`,
+`disposition`, exact non-null `reason`, and `evidence_ids` must survive draft
+capture, preparation, Git commit, verification, indexing, and fresh-process
+recall. A Git-only clone must have no originating draft evidence and retrieve
+the same alternative and linked evidence from its index with original `origin`
+and `client`. Automated lifecycle/clone coverage exercises this criterion;
+the revised native Claude UAT-08 verdict remains pending.
+
+Before implementation, focused reproductions returned **7 failed, 2 passed,
+43 deselected in 7.28 seconds**. Plugin help reproduced `UnicodeEncodeError`;
+root cp1252 help already exited successfully. After implementation, the focused
+suite returned **155 passed, 1 skipped in 160.98 seconds**. These are local
+results, separate from the supplied round 2 full-suite baseline.
+
+Final full suite on the finished implementation: **285 passed, 1 skipped in
+379.19 seconds**, including all real MCP stdio handshakes. Command:
+`.venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider --basetemp .test-tmp-remediation-full`.
+Implementation milestone: `bfa2b5a02e5822f008053161549c5c9c74b332c1`, record
+`d1f82581-487e-4503-9919-e76603fb032e`, verified `exact` and explicitly indexed.
+The run tested base `4a1478d` plus the implementation changes subsequently
+committed in that milestone; only documentation remained dirty afterward.
+
+Skipped: `test_all_client_preflight_rejects_symlink_escaping_repository`, because
+the process lacked directory-symlink permission. A separate local probe
+reproduced WinError 1314. Enable Windows Developer Mode or use an elevated
+shell, then rerun; the earlier user-reported isolated pass does not alter this
+full-suite count. `git diff --check` and canonical/plugin/historical-template
+consistency checks passed. Full-suite output stays in the ignored local file
+`.commitecho/remediation-full-pytest.txt`; automated fixture repositories stay
+in `.test-tmp-remediation-full/`. No new live fixture commit/record exists.
+
+Claude is absent from PATH and the usual user-local native/npm install paths.
+No revised Claude process, plugin validator, or organic agent capture was run.
+T7/T8 remain pending, as do portable PATH launch, interactive approval,
+cross-client handoff, Linux/macOS, IDE/desktop, and SessionStart qualification.
+Reviewer and approver fields remain unchanged.

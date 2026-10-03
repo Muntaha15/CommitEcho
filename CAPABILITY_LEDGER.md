@@ -1,10 +1,23 @@
 # CommitEcho client capability ledger
 
-Updated 2026-10-03 after review of baseline `1763d0d`. Configuration, MCP
+Updated 2026-10-03 after Claude UAT remediation on base `4a1478d`. Configuration, MCP
 protocol, agent workflow, and native lifecycle qualification are separate.
 See [the implementation review](MULTI_CLIENT_INTEGRATION_REVIEW.md).
 
 ## Recorded environment
+
+- Independent remediation implementation `bfa2b5a`, skill v6,
+  CommitEcho `0.1.1.dev0`: **285 passed, 1 skipped in 379.19 seconds** on
+  Windows, Python 3.12.14, MCP SDK 2.2.0, Git 2.49.0.windows.1. All real MCP
+  handshakes ran, including exact alternative-reason/evidence preservation
+  through restart and Git-only clone index recall. D-1-D-3 are fixed with
+  automated regressions; revised native Claude capture remains pending.
+  `test_all_client_preflight_rejects_symlink_escaping_repository` skipped for
+  directory-symlink privilege; a separate probe reproduced WinError 1314.
+  Enable Developer Mode or use an elevated shell and rerun. Earlier isolated
+  passes remain separate. Record `d1f82581-487e-4503-9919-e76603fb032e` verified
+  `exact` and was indexed. Claude is unavailable on PATH and usual native/npm
+  paths. The older environments and counts below retain their original scope.
 
 - Review/test host: Windows, Python 3.12.14, MCP SDK 2.2.0, CommitEcho 0.1.0,
   Git 2.49.0.windows.1; Codex desktop chat using its local shell/MCP tools.
@@ -67,7 +80,7 @@ See [the implementation review](MULTI_CLIENT_INTEGRATION_REVIEW.md).
 | Codex local | `.codex/config.toml`; `.agents/skills/commitecho/SKILL.md`; root `AGENTS.md` | Generated-command stdio tests; connected tools in this review chat | Interactive CLI 0.159.0-alpha.12.1 capture and fresh-process recall passed on Windows. Automatic skill discovery, unattended/cloud/native events, and cross-client handoff pending. `AGENTS.override.md` can mask activation. |
 | Antigravity IDE | `.agents/mcp_config.json`; shared `.agents` skill; `.agents/rules/commitecho.md` | Generated-command stdio tests; live IDE 1.107.0 report | Native discovery, capture, verification, indexing, process restart, and fresh-process recall passed on Windows. CLI is a separate untested surface; native hooks/cross-client pending. |
 | Copilot VS Code | `.vscode/mcp.json`; shared `.agents` skill; `.github/copilot-instructions.md` | Generated-command stdio tests | Interactive discovery/workflow pending. Local versus Agent Host/native harness not qualified. |
-| Claude Code | `.mcp.json`; `.claude/skills/commitecho/SKILL.md`; `CLAUDE.md` | Generated-command stdio and restart tests; server reads documented `CLAUDE_PROJECT_DIR` | Supplied Windows CLI 2.1.286 print-mode report passes organic skill activation, capture, exact verification, indexing, restart, and recall with local approval. Interactive approval, skill v5 adherence, plugins, portable PATH launch, POSIX, native events, and cross-client handoff remain pending. |
+| Claude Code | `.mcp.json`; `.claude/skills/commitecho/SKILL.md`; `CLAUDE.md` | Generated-command stdio and restart tests; server reads documented `CLAUDE_PROJECT_DIR` | Supplied Windows CLI 2.1.286 round 2 print-mode report confirms skill v5 attribution, project capture/recall, and plugin loading/index-only clone recall. Round 2 found alternative-field loss. Remediated live skill v6 capture, plugin capture, interactive approval, portable PATH launch, POSIX, native events, and cross-client handoff remain pending. |
 
 The suite asserts the eight tool names and intended worktree independently of
 the client applications. It exercises capture/prepare/commit/verify/restart/
@@ -82,8 +95,9 @@ instructions are preserved. Explicit server regeneration refreshes launch
 fields. All selected configurations are preflighted; dry-run opens no stores.
 Only exact recognized generated skill content is migrated.
 
-Skill v5 adds explicit per-evidence client attribution and optional known native
-session metadata. Exact generated v4 skills are recognized for setup and plugin
+Skill v6 retains explicit per-evidence client attribution and optional known native
+session metadata, and documents typed alternatives with rejection `reason`.
+Exact generated v4/v5 skills are recognized for setup and plugin
 regeneration; custom skills stay protected. Evidence is not assigned a client
 from a change's contributing sessions. Setup prints Claude approval guidance
 without modifying approval settings; the README records the version-specific

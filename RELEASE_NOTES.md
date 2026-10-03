@@ -5,6 +5,26 @@
 Package version: `0.1.1.dev0`. This work has not been released; v0.1.0 remains
 the published release. The portable plugin uses SemVer `0.1.1-dev.0`.
 
+Claude round 2 remediation (2026-10-03) fixes D-1-D-3: alternatives have a
+published field schema and reject unknown keys atomically; valid reasons and
+evidence links survive the commit/index/restart/clone lifecycle. Unexpected MCP
+errors identify exception type and tool while retaining error signaling.
+Root/plugin help works with redirected cp1252 output. Shared skill v6 adds a
+rejected-alternative example; exact stock v5 skills upgrade safely and custom
+skills stay protected. No dependency or storage migration is added.
+Supplied round 2 evidence confirms skill v5 project capture and plugin loading
+with index-only recall. Revised live v6 project/plugin capture remains pending
+because Claude is unavailable locally; see the updated UAT report.
+
+Remediation implementation `bfa2b5a`: **285 passed, 1 skipped in 379.19 seconds**
+on Windows with Python 3.12.14, MCP SDK 2.2.0, and Git 2.49.0.windows.1;
+all real stdio handshakes ran. The skipped
+`test_all_client_preflight_rejects_symlink_escaping_repository` lacked
+directory-symlink permission; a separate probe reproduced WinError 1314.
+Enable Developer Mode or use an elevated shell and rerun. Prior isolated
+results do not change this full-suite count. Diff and skill consistency checks
+passed, and the milestone's CommitEcho binding verified `exact`.
+
 The 2026-10-03 multi-client review repairs setup preservation, strict Git gate behavior, indexing deadlines,
 and plugin ownership; it does not extend those earlier sessions to revised
 discovery paths or native hooks. Four configuration profiles now include

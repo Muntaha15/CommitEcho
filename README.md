@@ -4,7 +4,7 @@ Preserve the decisions behind code changes and recall them through your coding a
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.1.1 in development (`0.1.1.dev0`); v0.1.0 is the published release.** Four local client configuration profiles are available. On 2026-10-03, interactive Codex and Antigravity IDE completed capture, commit, verification, indexing, process restart, and recall in a fresh process. A supplied Claude Code CLI report records the same workflow plus organic skill activation in Windows print mode with local approval. Claude and Copilot interactive acceptance, native lifecycle hooks, and plugin loading remain pending. See the [Codex results](CODEX_LIVE_TEST.md), [Antigravity results](ANTIGRAVITY_LIVE_TEST.md), [Claude Code report](CLAUDE_CODE_LIVE_TEST.md), and [capability ledger](CAPABILITY_LEDGER.md).
+**Status: v0.1.1 in development (`0.1.1.dev0`); v0.1.0 is the published release.** Four local client configuration profiles are available. On 2026-10-03, interactive Codex and Antigravity IDE completed capture, commit, verification, indexing, process restart, and recall in a fresh process. Supplied Claude Code CLI reports record that workflow plus organic skill activation in Windows print mode with local approval, and plugin loading with index-only recall. Round 2 exposed alternative-field loss; the remediation adds validation and skill v6 guidance, with revised live Claude capture still pending. Claude and Copilot interactive acceptance, native lifecycle hooks, and plugin capture remain pending. See the [Codex results](CODEX_LIVE_TEST.md), [Antigravity results](ANTIGRAVITY_LIVE_TEST.md), [Claude Code report](CLAUDE_CODE_LIVE_TEST.md), and [capability ledger](CAPABILITY_LEDGER.md).
 
 ## Install
 
@@ -281,10 +281,16 @@ compare `head_oid` with `git rev-parse HEAD` in the intended repository. A start
 status alone is insufficient. If the call fails, inspect trust, approval, and
 launch errors. `doctor` checks static configuration, not live client connectivity.
 
-Shared skill v5 asks agents to supply known client session metadata and to label
+Shared skill v6 asks agents to supply known client session metadata and to label
 each evidence item they author with their active client. Unknown metadata stays
 unset. Setup upgrades exact generated older skills and preserves custom content;
 the plugin generator uses the same recognition rule for its skill asset.
+
+Alternatives require `choice` and accept `disposition` (default `rejected`),
+`reason`, and `evidence_ids`. Use decision `rationale` for the selected approach
+and alternative `reason` for its rejection; unknown alternative fields are
+rejected. An omitted reason remains null. Stock v5 skills upgrade to v6;
+customized skills remain protected.
 
 ---
 

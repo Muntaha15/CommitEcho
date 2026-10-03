@@ -82,3 +82,77 @@ approval. The interactive approval dialog, the Claude plugin
 hook adapter, POSIX, and cross-client handoff require separate evidence.
 Raw transcripts, the inspection script, and fixture Git history stay in the
 ignored `.commitecho/claude-live-20261003/` directory.
+
+---
+
+## Round 2 conclusion - 2026-10-03
+
+This follow-up tested commit `4a1478d` (`multi-client-integration`,
+`0.1.1.dev0`) with skill v5 on the same Windows Claude Code CLI environment.
+The earlier sections describe round 1; this conclusion updates those findings.
+
+**PASS with defects:** all 15 acceptance checks passed. Discovery, unprompted
+skill use, capture, commit, verification, indexing, and fresh-process recall
+worked. A plugin-only session in a fresh clone also loaded the server and
+skill and recalled evidence by ID from the index, without a draft database.
+The operator indexed the clone before that session; plugin capture was not tested.
+
+- **O-2 and O-4 fixed:** client version and evidence client attribution were
+  captured, and setup printed trust, approval, and reload guidance. Omitting
+  an unknown native session ID is allowed by skill v5.
+- **O-3 closed:** evidence-by-ID retrieval worked with `source: "index"`.
+- **O-1 partly resolved:** every session's `init` reported `connected`, but
+  the Claude CLI still displayed "Pending approval". Use actual tool calls
+  to establish availability.
+- **D-1, high:** alternative inputs lack a defined field schema. Missing
+  `choice` caused a `KeyError`; a retry using `rationale` silently lost that
+  text, leaving `reason: null` in the committed record. Recall recovered the
+  reason only from separately linked evidence. This affects all clients.
+- **D-2, medium:** the fallback error exposed only `'choice'`, without useful
+  exception or tool context.
+- **D-3, low:** piped Windows `commitecho plugin --help` crashed with a cp1252
+  `UnicodeEncodeError`.
+
+The workflow passes, but reliable alternatives capture needs D-1 fixed before
+sign-off. An `exact` commit verification did not detect information already
+lost during capture. See the [round 2 UAT conclusion](CLAUDE_CODE_UAT_REPORT.md#14-round-2-conclusion---2026-10-03)
+for remediation and remaining coverage.
+
+The reported full-suite baseline was **269 passed, 1 skipped** in 136.04 s.
+`test_all_client_preflight_rejects_symlink_escaping_repository` skipped because
+that process lacked directory-symlink privilege (WinError 1314). Enable Windows
+Developer Mode or use an elevated shell, then rerun. The separately documented
+isolated pass does not change this full-suite count. No product code changed
+in round 2; this consolidation did not rerun tests.
+
+Raw round 2 transcripts and fixtures remain in
+`.commitecho/claude-live-r2-20261003/`.
+
+## Remediation follow-up - 2026-10-03
+
+D-1-D-3 are implemented with automated regression coverage: complete typed
+alternative validation and atomic rejection, exception/tool error context,
+and ASCII root/plugin help under redirected cp1252. Skill v6 documents
+`choice`, `disposition`, `reason`, and `evidence_ids`; exact stock v5 upgrades
+preserve customized content. Lifecycle tests preserve the structured reason
+and linked evidence through commit, exact verification, indexing, server
+restart, and index-only recall from a Git-only clone.
+
+The independent work starts from `4a1478d` with only the report consolidations
+dirty, using Windows, Python 3.12.14, MCP SDK 2.2.0, Git 2.49.0.windows.1,
+and CommitEcho `0.1.1.dev0`. This is automated server validation from Codex
+desktop, not a new live Claude run. Claude is absent from PATH and the usual
+native/npm install paths, so revised project capture and plugin-only capture
+remain pending. Historical null reasons remain unchanged. See
+[the remediation results](CLAUDE_CODE_UAT_REPORT.md#15-remediation---2026-10-03)
+for strengthened UAT-08 criteria and remaining qualification.
+
+Implementation commit `bfa2b5a` carries record
+`d1f82581-487e-4503-9919-e76603fb032e`, verified `exact` and indexed.
+The final local full suite passed **285 tests, with 1 skipped in 379.19 seconds**,
+including real MCP stdio handshakes. Skipped:
+`test_all_client_preflight_rejects_symlink_escaping_repository`, due to missing
+directory-symlink privilege; a separate probe reproduced WinError 1314.
+Enable Developer Mode or use an elevated shell and rerun. This count is
+separate from earlier full-suite and isolated rerun results. The local full-run
+log is `.commitecho/remediation-full-pytest.txt` (ignored).
