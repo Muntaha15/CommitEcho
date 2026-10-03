@@ -291,6 +291,9 @@ def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path, client_id:
                     client=client_id, operation_id=str(uuid4()),
                 )
                 change_id = change["change_id"]
+                evidence_id = str(uuid4())
+                alternative = {"choice": "Use a set", "disposition": "rejected",
+                               "reason": "A set does not preserve input order", "evidence_ids": [evidence_id]}
                 recorded = await call(
                     session, "record_decisions", change_id=change_id,
                     expected_revision=change["revision_counter"], operation_id=str(uuid4()),
@@ -298,7 +301,11 @@ def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path, client_id:
                         "problem": "Remove duplicates while preserving input order",
                         "choice": "Use dict.fromkeys", "rationale": "The standard library preserves order",
                         "disposition": "selected", "code_scope": {"paths": ["dedupe.py"]},
+                        "alternatives": [alternative],
                     }],
+                    evidence=[{"evidence_id": evidence_id, "kind": "discussion_summary",
+                               "origin": "agent_reported", "client": client_id,
+                               "content": "A set was rejected because input order must be preserved"}],
                 )
                 (tmp_path / "dedupe.py").write_text(
                     "def dedupe(values):\n    return list(dict.fromkeys(values))\n\n"
@@ -315,6 +322,8 @@ def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path, client_id:
                     selected_revision_ids=recorded["revision_ids"],
                     summary="Remove duplicates while preserving order", operation_id=str(uuid4()),
                 )
+                record = json.loads((tmp_path / prepared["record_path"]).read_text(encoding="utf-8"))
+                assert record["decisions"][0]["alternatives"] == [alternative]
                 git("add", prepared["record_path"])
                 git("commit", "-m", f"Add ordered deduplication\n\n{prepared['trailer']}")
                 commit_oid = git("rev-parse", "HEAD")
@@ -338,6 +347,10 @@ def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path, client_id:
                 evidence = await call(session, "get_evidence", record_id=prepared["record_id"])
                 assert evidence["found"] is True
                 assert evidence["commit_oid"] == commit_oid
+                assert evidence["record"]["decisions"][0]["alternatives"] == [alternative]
+                linked = await call(session, "get_evidence", evidence_id=evidence_id)
+                assert linked["client"] == client_id
+                assert linked["origin"] == "agent_reported"
                 comparison = await call(
                     session, "compare_history", from_ref=base_oid, to_ref=commit_oid,
                     path="dedupe.py",
@@ -345,6 +358,25 @@ def test_stdio_code_change_lifecycle_survives_restart(tmp_path: Path, client_id:
                 assert [r["revision_id"] for r in comparison["decisions"]] == recorded["revision_ids"]
                 status = await call(session, "get_status", change_id=change_id)
                 assert status["open_changes"] == []
+
+        clone = tmp_path / "fresh clone"
+        git("clone", str(tmp_path), str(clone))
+        subprocess.run([sys.executable, "-m", "commitecho", "index", "--repo", str(clone)],
+                       env=env, check=True, capture_output=True)
+        clone_params = StdioServerParameters(
+            command=sys.executable, args=["-m", "commitecho", "serve", "--repo", str(clone)], env=env)
+        async with stdio_client(clone_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await asyncio.wait_for(session.initialize(), timeout=10)
+                recalled = await call(session, "get_evidence", record_id=prepared["record_id"])
+                assert recalled["source"] == "index"
+                assert recalled["record"]["decisions"][0]["alternatives"] == [alternative]
+                linked = await call(session, "get_evidence", evidence_id=evidence_id)
+                assert linked["source"] == "index"
+                assert linked["client"] == client_id and linked["origin"] == "agent_reported"
+        import sqlite3
+        with sqlite3.connect(clone / ".git" / "commitecho" / "drafts.sqlite") as drafts:
+            assert drafts.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 0
 
     asyncio.run(lifecycle())
 
@@ -700,7 +732,7 @@ def test_skill_template_contains_version_header() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("version", [2, 3, 4])
+@pytest.mark.parametrize("version", [2, 3, 4, 5])
 @pytest.mark.parametrize("client_id", ["codex", "claude_code"])
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_stale_skill_triggers_update(tmp_path: Path, version: int, client_id: str, dry_run: bool) -> None:
@@ -724,10 +756,13 @@ def test_stale_skill_triggers_update(tmp_path: Path, version: int, client_id: st
 # ---------------------------------------------------------------------------
 
 
-def test_skill_version_5_and_neutral_guidance() -> None:
-    """Skill must be version 5 with neutral client identification and explicit boundaries."""
-    assert SKILL_VERSION == 5
-    assert 'version: 5' in _SKILL_TEMPLATE
+def test_skill_version_6_and_neutral_guidance() -> None:
+    """Skill must describe the published alternative schema and attribution boundaries."""
+    assert SKILL_VERSION == 6
+    assert 'version: 6' in _SKILL_TEMPLATE
+    assert '"disposition":"rejected"' in _SKILL_TEMPLATE
+    assert '"reason":' in _SKILL_TEMPLATE
+    assert "Unknown fields are rejected" in _SKILL_TEMPLATE
     # No hardcoded antigravity default in client parameter or begin_change call
     assert 'client="antigravity" (or' not in _SKILL_TEMPLATE
     assert 'client="antigravity",' not in _SKILL_TEMPLATE
@@ -778,7 +813,7 @@ def test_legacy_skill_migration_and_custom_preservation(tmp_path: Path) -> None:
     assert custom_legacy.exists(), "Custom legacy skill must not be deleted"
 
 
-@pytest.mark.parametrize("version", [3, 4])
+@pytest.mark.parametrize("version", [3, 4, 5])
 def test_custom_installed_skill_preserved_with_conflict(tmp_path: Path, version: int) -> None:
     """A customized skill in .agents/skills/commitecho/SKILL.md must not be overwritten."""
     profile = ALL_PROFILES["antigravity"]

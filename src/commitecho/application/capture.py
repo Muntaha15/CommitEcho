@@ -203,24 +203,16 @@ class CaptureService:
                 raise ValueError(
                     f"A predecessor revision does not belong to decision '{decision_id}'."
                 )
+            alts = [Alternative.model_validate(a) for a in dec_data.get("alternatives", [])]
             referenced_ids = set(dec_data.get("evidence_ids", []))
-            for alternative in dec_data.get("alternatives", []):
-                referenced_ids.update(alternative.get("evidence_ids", []))
+            for alternative in alts:
+                referenced_ids.update(alternative.evidence_ids)
             for ev_id in referenced_ids:
                 row = self._conn.execute(
                     "SELECT change_id FROM evidence WHERE evidence_id = ?", (ev_id,)
                 ).fetchone()
                 if row is None or row["change_id"] != change_id:
                     raise ValueError(f"Evidence '{ev_id}' does not belong to change '{change_id}'.")
-            alts = [
-                Alternative(
-                    choice=a["choice"],
-                    disposition=DecisionDisposition(a.get("disposition", "rejected")),
-                    reason=a.get("reason"),
-                    evidence_ids=a.get("evidence_ids", []),
-                )
-                for a in dec_data.get("alternatives", [])
-            ]
             code_scope_data = dec_data.get("code_scope", {})
             revision = DecisionRevision(
                 decision_id=decision_id,

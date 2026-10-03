@@ -8,6 +8,7 @@ is rejected.
 from __future__ import annotations
 
 import subprocess
+import json
 import threading
 import uuid
 from pathlib import Path
@@ -29,6 +30,32 @@ def _git_available() -> bool:
 
 
 pytestmark = pytest.mark.skipif(not _git_available(), reason="Git executable not available")
+
+
+@pytest.mark.parametrize("alternative,field", [
+    ({"description": "cache", "reason": "too complex"}, "choice"),
+    ({"choice": "cache", "rationale": "too complex"}, "rationale"),
+])
+def test_invalid_alternative_rolls_back_and_can_retry(tmp_path, alternative, field):
+    svc = _open_capture(_make_repo(tmp_path))
+    change_id = svc.begin_change(title="alternatives", client="codex", operation_id="begin")["change_id"]
+    evidence_id = str(uuid.uuid4())
+    decision = {"problem": "p", "choice": "c", "rationale": "r", "alternatives": [alternative]}
+    args = dict(change_id=change_id, expected_revision=0, operation_id="record",
+                evidence=[{"evidence_id": evidence_id, "kind": "test_result", "content": "atomic"}],
+                decisions=[{"problem": "valid first", "choice": "c", "rationale": "r"}, decision])
+    with pytest.raises(ValueError, match=field):
+        svc.record_decisions(**args)
+    for table in ("evidence", "decision_revisions"):
+        assert svc._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+    assert svc._conn.execute("SELECT COUNT(*) FROM operation_log WHERE operation_id='record'").fetchone()[0] == 0
+    assert svc._conn.execute("SELECT revision_counter FROM changes WHERE change_id=?", (change_id,)).fetchone()[0] == 0
+    valid = {"choice": "cache", "disposition": "rejected", "reason": "too complex", "evidence_ids": [evidence_id]}
+    decision["alternatives"] = [valid, {"choice": "another"}]
+    result = svc.record_decisions(**args)
+    assert svc.record_decisions(**args) == result
+    row = svc._conn.execute("SELECT alternatives FROM decision_revisions WHERE revision_id=?", (result["revision_ids"][1],)).fetchone()
+    assert json.loads(row[0]) == [valid, {"choice": "another", "disposition": "rejected", "reason": None, "evidence_ids": []}]
 
 
 # ---------------------------------------------------------------------------

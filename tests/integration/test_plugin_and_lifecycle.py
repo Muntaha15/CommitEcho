@@ -27,6 +27,19 @@ def _git_available() -> bool:
 pytestmark = pytest.mark.skipif(not _git_available(), reason="Git executable not available")
 
 
+@pytest.mark.parametrize("args,expected", [
+    (["--help"], "preserve and recall"),
+    (["plugin", "--help"], "skills/commitecho/SKILL.md"),
+])
+def test_redirected_help_cp1252(args, expected):
+    result = subprocess.run(
+        [sys.executable, "-m", "commitecho", *args], capture_output=True,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=30)
+    assert result.returncode == 0, result.stderr.decode("cp1252")
+    assert expected in result.stdout.decode("cp1252")
+    assert b"Traceback" not in result.stderr
+
+
 @pytest.fixture
 def test_repo(tmp_path: Path):
     """Create a temporary Git repository with multiple commits."""
@@ -135,9 +148,10 @@ class TestClaudeCodeSessionHook:
 
 
 class TestPluginGenerator:
+    @pytest.mark.parametrize("version", [4, 5])
     @pytest.mark.parametrize("customized", [False, True])
     @pytest.mark.parametrize("dry_run", [False, True])
-    def test_v4_skill_upgrade_preserves_custom_content(self, test_repo, customized, dry_run):
+    def test_stock_skill_upgrade_preserves_custom_content(self, test_repo, customized, dry_run, version):
         from commitecho.integrations.profiles import SKILL_TEMPLATE
 
         runner = CliRunner()
@@ -145,7 +159,7 @@ class TestPluginGenerator:
         assert runner.invoke(plugin, args).exit_code == 0
         out = test_repo / "commitecho-plugin"
         skill = out / "skills" / "commitecho" / "SKILL.md"
-        old = (Path(__file__).parents[1] / "fixtures" / "skill-v4.md").read_text(encoding="utf-8")
+        old = (Path(__file__).parents[1] / "fixtures" / f"skill-v{version}.md").read_text(encoding="utf-8")
         skill.write_text(old + ("\nTeam customization.\n" if customized else ""), encoding="utf-8")
         before = {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
         result = runner.invoke(plugin, args + ["--portable"] + (["--dry-run"] if dry_run else []))

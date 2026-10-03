@@ -54,7 +54,7 @@ def _get_git_and_dbs(repo: str | None):
 @click.group()
 @click.version_option(package_name="commitecho")
 def main() -> None:
-    """CommitEcho – preserve and recall the decisions behind code changes."""
+    """CommitEcho - preserve and recall the decisions behind code changes."""
 
 
 @main.command()
@@ -1207,9 +1207,9 @@ def plugin(
 
     Creates standard plugin layout:
       <output_dir>/
-      ├── .claude-plugin/plugin.json
-      ├── .mcp.json
-      └── skills/commitecho/SKILL.md
+      |-- .claude-plugin/plugin.json
+      |-- .mcp.json
+      `-- skills/commitecho/SKILL.md
     """
     from commitecho.integrations.profiles import SKILL_TEMPLATE, is_known_generated_skill
 

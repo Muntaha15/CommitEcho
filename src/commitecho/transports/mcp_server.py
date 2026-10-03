@@ -24,6 +24,7 @@ from commitecho.application.capture import CaptureService
 from commitecho.application.prepare import PrepareService
 from commitecho.application.verify import VerifyService
 from commitecho.application.retrieve import RetrieveService
+from commitecho.domain.models import Alternative
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +41,10 @@ class BeginChangeInput(BaseModel):
     prior_change_id: str | None = Field(default=None, description="Resume an existing open change.")
 
 
+class AlternativeInput(Alternative):
+    disposition: Literal["proposed", "selected", "rejected", "withdrawn"] = "rejected"
+
+
 class DecisionInput(BaseModel):
     problem: str
     choice: str
@@ -47,7 +52,7 @@ class DecisionInput(BaseModel):
     decision_id: str | None = None
     predecessor_revision_ids: list[str] = Field(default_factory=list)
     disposition: Literal["proposed", "selected", "rejected", "withdrawn"] = "proposed"
-    alternatives: list[dict[str, Any]] = Field(default_factory=list)
+    alternatives: list[AlternativeInput] = Field(default_factory=list)
     code_scope: dict[str, Any] = Field(default_factory=dict)
     evidence_ids: list[str] = Field(default_factory=list)
 
@@ -156,8 +161,11 @@ def create_server(repo_path: str | Path) -> Server:
         except (ValueError, TypeError) as exc:
             return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], is_error=True)
         except Exception as exc:
-            print(f"[commitecho] Unexpected error in {params.name}: {exc}", file=sys.stderr)
-            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], is_error=True)
+            exception_type = type(exc).__name__
+            print(f"[commitecho] Unexpected {exception_type} in {params.name}: {exc}", file=sys.stderr)
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({
+                "error": str(exc), "exception_type": exception_type, "tool": params.name,
+            }))], is_error=True)
 
     return Server("commitecho", on_list_tools=list_tools, on_call_tool=call_tool)
 

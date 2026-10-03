@@ -1,6 +1,6 @@
 ---
 name: commitecho
-version: 5
+version: 6
 description: Capture decisions made during coding tasks, recall rationale from Git history, and prepare verified commit records.
 ---
 
@@ -31,6 +31,8 @@ description: Capture decisions made during coding tasks, recall rationale from G
    - Pass `change_id`, `expected_revision` (matching current `revision_counter`), and a new UUID `operation_id`.
    - For each decision, provide `problem`, `choice`, `rationale`, and optional `predecessor_revision_ids`, `code_scope`, and `disposition` (`"selected"`, `"rejected"`, `"proposed"`).
    - Only list alternatives that were actually discussed.
+   - Alternatives require `choice`; accepted optional fields are `disposition` (default `"rejected"`), `reason`, and `evidence_ids`. Unknown fields are rejected. The decision's `rationale` explains the chosen approach; an alternative's `reason` explains its rejection. Omit an unrecorded reason rather than inventing one.
+   - Example rejected alternative inside a decision's `alternatives`: `{"choice":"Add a cache dependency", "disposition":"rejected", "reason":"The existing standard library solution meets the requirement", "evidence_ids":["<supporting-evidence-id>"]}`. Use only alternatives and reasons present in the conversation, and reference evidence belonging to this change.
    - For evidence you author, set `origin="agent_reported"` and `client` to your active client ID, even when resuming a change started by another client. Preserve the original client when referencing existing evidence.
    - Example evidence item for `record_decisions`: `{"evidence_id":"<new-uuid>", "kind":"test_result", "origin":"agent_reported", "client":"claude_code", "content":"<actual observed test result>"}`. Reference its `evidence_id` in the relevant decision's or alternative's `evidence_ids` so preparation includes it.
    - Save the returned `revision_ids` and `evidence_ids`, and update `expected_revision` to the returned `revision_counter`.

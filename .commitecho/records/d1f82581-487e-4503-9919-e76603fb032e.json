@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "record_id": "d1f82581-487e-4503-9919-e76603fb032e",
+  "change_id": "faaee332-f26c-4df6-a918-8dfe98a1b1c9",
+  "summary": "Fix Claude UAT alternative validation, MCP error context, and Windows help; publish skill v6.",
+  "prepared_for": {
+    "parent_oid": "4a1478dbdbb8029cd51e1b92c258b36f2c9c6ea6",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "b1852676479c67504c43b753cff94b2a8e6a806384bba796163281a5862efb70"
+  },
+  "decisions": [
+    {
+      "decision_id": "31bd59c7-983e-4378-a716-711cc990898b",
+      "revision_id": "4feefa84-4fc2-4622-8877-548db9d3de0f",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "Alternative dictionaries accept unknown fields and silently drop rejection rationale; unexpected errors lack context; plugin help fails under cp1252.",
+      "choice": "Reuse the domain Alternative model for complete shared validation and a typed MCP input, add tool/type error context, and use ASCII help.",
+      "rationale": "Validation at both entry points protects all capture callers while preserving existing transactions and record structure.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/domain/models.py",
+          "src/commitecho/application/capture.py",
+          "src/commitecho/transports/mcp_server.py",
+          "src/commitecho/transports/cli.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-03T16:31:09.293778Z"
+    },
+    {
+      "decision_id": "2fa4d575-05cb-4daf-9f69-ecad9472f0a0",
+      "revision_id": "d2aeffbc-9d58-43c9-979a-1ab0a9c2fc2f",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "Published skill guidance lacks a correct rejected-alternative example, and stock installed v5 skills need a safe upgrade.",
+      "choice": "Publish canonical/plugin skill v6 and recognize the exact v5 template hash using existing upgrade handling.",
+      "rationale": "An exact historical fixture proves stock upgrades while keeping customized content protected. No database migration or dependency is needed.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/integrations/skill.md",
+          "src/commitecho/integrations/profiles.py",
+          "commitecho-plugin/skills/commitecho/SKILL.md",
+          "tests/fixtures/skill-v5.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-03T16:36:47.716718Z"
+    },
+    {
+      "decision_id": "3d9eca00-0237-4cf4-94d3-1f9a0f73fc37",
+      "revision_id": "cab58b6f-2d01-4336-9dd5-ddfe231cfbd8",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "Tool success and exact commit binding alone did not demonstrate faithful alternatives capture in round 2.",
+      "choice": "Extend existing MCP schema, atomicity, lifecycle, clone, help, and skill-upgrade regressions and run the full suite before committing.",
+      "rationale": "Checks now require exact alternative reason and evidence preservation through all stages and distinguish automated protocol results from unavailable live Claude qualification.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "tests/test_mcp_dispatch.py",
+          "tests/integration/test_idempotency.py",
+          "tests/integration/test_history_retrieval.py",
+          "tests/integration/test_plugin_and_lifecycle.py",
+          "tests/integration/test_setup.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "3433e97b-b261-4b41-bddb-ef189656226c"
+      ],
+      "captured_at": "2026-10-03T16:43:12.305485Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "3433e97b-b261-4b41-bddb-ef189656226c",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Finished implementation on base 4a1478dbdbb8029cd51e1b92c258b36f2c9c6ea6: full suite 285 passed, 1 skipped in 379.19s; all real MCP stdio handshakes ran. Skipped test_all_client_preflight_rejects_symlink_escaping_repository; separate probe reproduced WinError 1314. Remedy: Windows Developer Mode or elevated shell. git diff --check passed; canonical/plugin skills and exact original v5 fixture matched. Claude absent from PATH and native/npm locations; no revised live Claude run.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T16:43:12.305485Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-03T16:43:29.730052Z"
+}

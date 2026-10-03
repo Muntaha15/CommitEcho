@@ -151,11 +151,11 @@ class Alternative(BaseModel):
     """A considered-but-not-chosen approach within a decision."""
 
     choice: str
-    disposition: DecisionDisposition
-    reason: str | None = None
-    evidence_ids: list[str] = Field(default_factory=list)
+    disposition: DecisionDisposition = DecisionDisposition.REJECTED
+    reason: str | None = Field(default=None, description="Why this alternative was rejected; omit when unrecorded.")
+    evidence_ids: list[str] = Field(default_factory=list, description="Supporting evidence IDs belonging to this change.")
 
-    model_config = {"frozen": True}
+    model_config = {"frozen": True, "extra": "forbid"}
 
 
 class CodeScope(BaseModel):
