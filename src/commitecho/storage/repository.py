@@ -219,6 +219,60 @@ def insert_decision_revision(
         )
 
 
+def get_decision_state(conn, git, change_id: str, index_conn=None) -> dict[str, Any]:
+    """Recover current draft decisions and those not yet verified in this history."""
+    revisions = []
+    for row in conn.execute(
+        """SELECT d.* FROM decision_revisions d WHERE d.change_id = ?
+           AND NOT EXISTS (
+               SELECT 1 FROM revision_predecessors p
+               JOIN decision_revisions successor ON successor.revision_id = p.revision_id
+               WHERE p.predecessor_id = d.revision_id AND successor.change_id = d.change_id
+           ) ORDER BY d.rowid""", (change_id,),
+    ):
+        item = dict(row)
+        item.pop("change_id")
+        for field in ("alternatives", "code_scope", "evidence_ids"):
+            item[field] = json.loads(item[field])
+        item["predecessor_revision_ids"] = [r[0] for r in conn.execute(
+            "SELECT predecessor_id FROM revision_predecessors WHERE revision_id = ? ORDER BY predecessor_id",
+            (row["revision_id"],),
+        )]
+        revisions.append(item)
+
+    published = set()
+    records = conn.execute(
+        "SELECT record_id, selected_revision_ids FROM commit_records WHERE change_id = ?",
+        (change_id,),
+    ).fetchall()
+    if records:
+        from commitecho.storage.db import open_index_db
+
+        owned_index = index_conn is None
+        index_conn = index_conn if index_conn is not None else open_index_db(git.repo_info.common_dir)
+        try:
+            head = git.head_oid()
+            reachable, coverage = git.reachable_commit_oids(head) if head else ([], "full")
+            reachable = set(reachable) if coverage == "full" else set()
+            for record in records:
+                for binding in index_conn.execute(
+                    "SELECT commit_oid, validation_details FROM bindings WHERE record_id = ? AND outcome = 'exact'",
+                    (record["record_id"],),
+                ):
+                    if not json.loads(binding["validation_details"]).get("local_preparation_verified"):
+                        continue
+                    if binding["commit_oid"] in reachable:
+                        published.update(json.loads(record["selected_revision_ids"]))
+                        break
+        finally:
+            if owned_index:
+                index_conn.close()
+    return {
+        "decision_revisions": revisions,
+        "unpublished_revision_ids": [r["revision_id"] for r in revisions if r["revision_id"] not in published],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Commit records
 # ---------------------------------------------------------------------------

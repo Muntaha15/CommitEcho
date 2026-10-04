@@ -22,6 +22,7 @@ from commitecho.git.adapter import GitAdapter, StagedEntry, _COMMITECHO_RECORD_P
 from commitecho.storage.repository import (
     check_operation,
     get_change,
+    get_decision_state,
     insert_commit_record,
     record_operation,
     update_change_status,
@@ -205,6 +206,11 @@ class PrepareService:
             "trailer": record.trailer(),
             "staged_paths": sorted(staged_paths),
             "uncovered_paths": uncovered,
+            "omitted_revision_ids": [
+                revision_id for revision_id in get_decision_state(
+                    self._conn, self._git, change_id
+                )["unpublished_revision_ids"] if revision_id not in selected_revision_ids
+            ],
             "code_manifest_sha256": digest_before,
         }
         record_operation(self._conn, operation_id, "prepare_commit", payload, response)

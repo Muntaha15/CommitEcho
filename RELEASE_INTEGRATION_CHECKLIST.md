@@ -9,7 +9,7 @@ versions, OS, client/model, Python/MCP/Git versions, and installation mode.
 Use disposable fixture repositories for commits and hooks. Keep raw transcripts,
 credentials, databases, and machine-specific configuration private.
 
-The candidate is `0.2.0.dev0` with skill v6. These checks need the actual clients;
+The current candidate is `0.2.0.dev0` with skill v7. These checks need the actual clients;
 the local automated suite and protocol tests are recorded separately.
 Completed runs retain their recorded dates and client versions; remaining
 checks use the current candidate.
@@ -59,25 +59,48 @@ Report IDE results separately from Antigravity CLI; qualify CLI only if tested.
 
 ## Claude Code
 
-- [ ] Fresh project setup loads the intended repository and skill v6 through
+**Reported Windows print-mode results received on 2026-10-04:** Claude Code
+CLI 2.1.286, model `claude-opus-5-5`, candidate `01c1eaf`, skill v6. Project and
+plugin-only capture/recall passed. The resume/runtime follow-up is implemented;
+repeat the affected native checks with skill v7 before release (F-1/F-2). These are the supplied run's
+results; consolidation did not rerun the client.
+
+- [x] Fresh project setup loads the intended repository and skill v6 through
   normal trust/approval. Actual tool calls work, regardless of a misleading
   startup `pending` display. Record print and interactive modes separately.
+  Print mode passed; the interactive approval dialog was not tested.
 - [ ] An ordinary task organically captures the chosen approach and discussed
   rejected alternative. Its structured rejection reason, evidence references,
   client attribution, and known session metadata remain accurate.
-- [ ] Project capture -> prepare -> fixture commit -> exact verification ->
+  Single-session capture passed; the reported resume omission (F-1) is fixed in
+  the automated regression. The native repeat is pending. Known session metadata
+  was supplied inconsistently in the earlier run.
+- [x] Project capture -> prepare -> fixture commit -> exact verification ->
   index -> restart/recall succeeds. A Git-only clone retrieves the same
   structured alternatives and linked evidence without originating drafts.
-- [ ] Validate and load the generated plugin by itself. Repeat organic capture
+- [x] Validate and load the generated plugin by itself. Repeat organic capture
   and restart/clone recall without duplicate project server/skill registrations.
-- [ ] Try stock plugin upgrades across versions and preserve custom plugin
+  Plugin indexing used another checkout's interpreter. Runtime discovery (F-2)
+  now returns the server's index argument list and passes two-environment protocol
+  checks; repeat its use through the native plugin.
+- [x] Try stock plugin upgrades across versions and preserve custom plugin
   assets. Test the portable PATH launcher separately from the pinned interpreter.
-- [ ] Confirm malformed alternatives fail without partial capture, subsequent
+- [x] Confirm malformed alternatives fail without partial capture, subsequent
   corrected calls work, and redirected Windows help remains readable.
 - [ ] Exercise paths with spaces, open-change restart/resume, and interactive
   approval. Optional cross-client handoff should retain each client's attribution.
+  Spaced paths passed. Resume omitted the earlier decision from the commit
+  while retaining it in drafts (F-1); interactive approval and handoff were untested.
 
-Project v6 capture and plugin v6 capture are required before release.
+Project v6 capture and plugin v6 capture passed in the reported run. F-1/F-2
+are implemented and covered by automated restart, partial-commit, clone-recall,
+and runtime checks. Repeat the affected native capture, indexing, and recall
+checks before release. Skill v7 also adds generated-ID guidance (F-3), and plugin
+regeneration distinguishes a pinned-runtime mismatch (F-4) while preserving
+customized files.
+The follow-up full automated suite passed **403 tests, with no skips**, on
+2026-10-04. This establishes server/protocol behavior; native Claude retesting
+remains pending because the client is unavailable on the follow-up host.
 Native SessionStart installation remains gated; no native-event pass is expected
 from these fixes. Unavailable platforms or surfaces remain explicitly untested.
 

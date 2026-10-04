@@ -862,7 +862,7 @@ def test_skill_template_contains_version_header() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("version", [2, 3, 4, 5])
+@pytest.mark.parametrize("version", [2, 3, 4, 5, 6])
 @pytest.mark.parametrize("client_id", ["codex", "claude_code"])
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_stale_skill_triggers_update(tmp_path: Path, version: int, client_id: str, dry_run: bool) -> None:
@@ -886,10 +886,10 @@ def test_stale_skill_triggers_update(tmp_path: Path, version: int, client_id: st
 # ---------------------------------------------------------------------------
 
 
-def test_skill_version_6_and_neutral_guidance() -> None:
+def test_skill_version_7_and_neutral_guidance() -> None:
     """Skill must describe the published alternative schema and attribution boundaries."""
-    assert SKILL_VERSION == 6
-    assert 'version: 6' in _SKILL_TEMPLATE
+    assert SKILL_VERSION == 7
+    assert 'version: 7' in _SKILL_TEMPLATE
     assert '"disposition":"rejected"' in _SKILL_TEMPLATE
     assert '"reason":' in _SKILL_TEMPLATE
     assert "Unknown fields are rejected" in _SKILL_TEMPLATE
@@ -943,7 +943,7 @@ def test_legacy_skill_migration_and_custom_preservation(tmp_path: Path) -> None:
     assert custom_legacy.exists(), "Custom legacy skill must not be deleted"
 
 
-@pytest.mark.parametrize("version", [3, 4, 5])
+@pytest.mark.parametrize("version", [3, 4, 5, 6])
 def test_custom_installed_skill_preserved_with_conflict(tmp_path: Path, version: int) -> None:
     """A customized skill in .agents/skills/commitecho/SKILL.md must not be overwritten."""
     profile = ALL_PROFILES["antigravity"]

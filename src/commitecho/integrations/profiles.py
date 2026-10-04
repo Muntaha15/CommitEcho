@@ -52,13 +52,14 @@ def is_known_generated_skill(content: str) -> bool:
     normalized = content.replace("\r\n", "\n")
     if normalized == _SKILL_TEMPLATE.replace("\r\n", "\n"):
         return True
-    # Historical generated v1-v5 assets; exact hashes preserve custom skills.
+    # Historical generated v1-v6 assets; exact hashes preserve custom skills.
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest() in {
         "4fcbaa8d5e188e604a99a04f070b8940804a237705fe60570a0615268dcc312e",
         "23ecf53972ec2c127d354a83fb41476961f115a824e55d600a70a7a611a8f127",
         "1d3bc3284a1d3e2e3af49cc29ef390c3045d556c054046c65ee7c9f317a19a4c",
         "efeb302a83c403dc07fa6c68bc0d8e9653652cc134f438aa22568d9db15d6859",
         "a95c0129397a1f848b52de36c12e2d2e1b97ca15b4fc2a6353bbe389c06d9912",
+        "82a270f595d5d1d607302b705b7ed7c8f4e3b05368212f0c7b9120ded4eff297",
     }
 
 

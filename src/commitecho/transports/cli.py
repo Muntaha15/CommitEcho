@@ -1337,6 +1337,22 @@ def plugin(
             for runtime in (["commitecho", "serve"], [Path(sys.executable).as_posix(), "-m", "commitecho", "serve"]):
                 allowed.add(json.dumps({"mcpServers": {"commitecho": {"command": runtime[0], "args": runtime[1:]}}}, indent=2) + "\n")
         if existing not in allowed:
+            if fpath == mcp_file:
+                try:
+                    prior = json.loads(existing)
+                    prior_command = prior["mcpServers"]["commitecho"]["command"]
+                except (ValueError, KeyError, TypeError):
+                    prior_command = None
+                pinned = {"mcpServers": {"commitecho": {
+                    "command": prior_command, "args": ["-m", "commitecho", "serve"],
+                }}}
+                if isinstance(prior_command, str) and existing == json.dumps(pinned, indent=2) + "\n":
+                    raise click.ClickException(
+                        f"'{fpath}' pins a different Python runtime: {prior_command!r}; "
+                        f"the current runtime is {Path(sys.executable).as_posix()!r}. "
+                        "Preserving all files; run plugin generation with the pinned runtime "
+                        "or choose an empty output directory."
+                    )
             raise click.ClickException(
                 f"'{fpath}' is customized or belongs to another plugin. "
                 "Preserving all files; choose an empty output directory."

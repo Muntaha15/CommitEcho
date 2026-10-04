@@ -155,6 +155,12 @@ def create_server(repo_path: str | Path) -> Server:
         from commitecho.application.prepare import IndexChangedError
         try:
             result = await _dispatch(params.name, params.arguments or {}, capture, prepare, verify, retrieve)
+            if params.name == "get_status":
+                result["runtime"] = {
+                    "python_executable": sys.executable,
+                    "index_argv": [sys.executable, "-m", "commitecho", "index",
+                                   "--repo", repo_info.worktree_dir],
+                }
             return CallToolResult(content=[TextContent(type="text", text=json.dumps(result, default=str))])
         except IndexChangedError as exc:
             return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc), "error_code": "INDEX_CHANGED"}))], is_error=True)
@@ -271,7 +277,8 @@ _TOOL_DEFINITIONS: list[Tool] = [
         description=(
             "Open or resume a CommitEcho change for the current worktree. "
             "Call this at the start of any meaningful code/design task. "
-            "Returns change_id, session_id, base Git OID, and revision counter."
+            "Returns change_id, session_id, base Git OID, revision counter, "
+            "and current decision revisions for resumed work."
         ),
         input_schema=BeginChangeInput.model_json_schema(),
     ),
@@ -334,7 +341,9 @@ _TOOL_DEFINITIONS: list[Tool] = [
         name="get_status",
         description=(
             "Return pending changes, stale preparations, indexing coverage, and setup capability. "
-            "Use to check server health and see what work is in progress."
+            "Use to check server health and see what work is in progress. "
+            "A change_id includes current draft decisions; runtime.index_argv "
+            "identifies the server's Python environment for CLI indexing."
         ),
         input_schema=GetStatusInput.model_json_schema(),
     ),

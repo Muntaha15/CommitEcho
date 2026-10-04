@@ -318,7 +318,7 @@ class TestPluginGenerator:
         assert repeated.output.count("[skip]") == 3
         assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == after
 
-    @pytest.mark.parametrize("version", [4, 5])
+    @pytest.mark.parametrize("version", [4, 5, 6])
     @pytest.mark.parametrize("customized", [False, True])
     @pytest.mark.parametrize("dry_run", [False, True])
     def test_stock_skill_upgrade_preserves_custom_content(self, test_repo, monkeypatch, customized, dry_run, version):
@@ -398,7 +398,8 @@ class TestPluginGenerator:
         assert after == before
 
     @pytest.mark.parametrize("dry_run", [False, True])
-    def test_upgrade_preserves_different_local_runtime(self, test_repo, monkeypatch, dry_run):
+    @pytest.mark.parametrize("customized", [False, True])
+    def test_upgrade_preserves_different_local_runtime(self, test_repo, monkeypatch, dry_run, customized):
         runner = CliRunner()
         args = ["--repo", str(test_repo)]
         monkeypatch.setattr("importlib.metadata.version", lambda name: "0.1.1.dev0")
@@ -407,11 +408,19 @@ class TestPluginGenerator:
         mcp = out / ".mcp.json"
         data = json.loads(mcp.read_text(encoding="utf-8"))
         data["mcpServers"]["commitecho"]["command"] = "/another/runtime/python"
+        if customized:
+            data["mcpServers"]["commitecho"]["env"] = {"TEAM_SETTING": "keep"}
         mcp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         before = {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
         monkeypatch.setattr("importlib.metadata.version", lambda name: "0.2.0.dev0")
         result = runner.invoke(plugin, args + (["--dry-run"] if dry_run else []))
         assert result.exit_code != 0, result.output
+        if customized:
+            assert "customized or belongs to another plugin" in result.output
+            assert "pins a different Python runtime" not in result.output
+        else:
+            assert "pins a different Python runtime: '/another/runtime/python'" in result.output
+            assert "run plugin generation with the pinned runtime" in result.output
         assert "choose an empty output directory" in result.output
         assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == before
 

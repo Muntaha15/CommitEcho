@@ -6,7 +6,7 @@ Package version: `0.2.0.dev0`; portable plugin: `0.2.0-dev.0`. This candidate
 has not been released. v0.1.0 remains the published release.
 
 The feature release includes Claude Code setup/plugin generation, opt-in Git
-message validation and hook management, bounded indexing, and shared skill v6.
+message validation and hook management, bounded indexing, and shared skill v7.
 The prior `0.1.1.dev0` milestones below are included in this candidate.
 
 Release-review repairs close R1-R4: legacy skill cleanup and Claude settings
@@ -45,7 +45,7 @@ server/protocol results retain their separate scopes.
 |---|---|
 | Codex | Windows interactive CLI capture, fixture commit, exact verification, indexing, and fresh-process recall passed on 2026-10-03. |
 | Antigravity IDE | The developer accepted the live Phase 1/2 results and automated fixture checks for this candidate on 2026-10-04, including capture, exact verification, indexing, restart recovery, fresh-chat recall, and a linked worktree with spaces. |
-| Claude Code | Earlier Windows print-mode capture/recall and plugin loading results are recorded. Skill v6 project and plugin-only capture, restart, and clone recall remain the required live release checks. |
+| Claude Code | The supplied 2026-10-04 Windows print-mode run passed skill v6 project/plugin-only capture, exact verification, and restart/clone recall. Its resume/runtime findings (F-1/F-2) are now addressed in code and protocol regressions; affected native checks with skill v7 remain pending before release. |
 | Copilot VS Code | Generated configuration and protocol checks are covered; interactive client checks remain pending. |
 
 The live Antigravity fixture commit is
@@ -56,10 +56,39 @@ verification returned `exact` and indexing completed. After IDE restart, open
 change `58d1a1c6-8779-4ac7-aa95-9c4318c5d63b` was recovered and the committed
 decision was recalled through native MCP tools.
 
+The Claude run used CLI 2.1.286 and model `claude-opus-5-5` on a fresh clone at
+`01c1eaf` (`0.2.0.dev0`, skill v6). Project commit
+`b96a800a3d26c03ad64234bf11569c0bb69358c6` and plugin commit
+`5a42674b67811597b93588f369c2e307f47e86d1` preserved structured alternatives,
+reasons, and linked evidence through recall. Stock plugin upgrades, custom-asset
+preservation, portable PATH connection, malformed-input rejection, and redirected
+Windows help also passed. Open-change resume needs access to earlier revision
+IDs and clear handling of decisions omitted from preparation; the earlier
+decision remained in drafts after the partial record was committed. The follow-up
+implementation below addresses this behavior and the smaller findings.
+
+Resume/runtime follow-up (2026-10-04): existing resume and scoped status responses
+expose current decisions and unpublished revision IDs. Preparation reports omitted
+revisions; exact verification keeps unpublished work open, excluding superseded
+and previously verified revisions. MCP status supplies the server's Python and
+index argument list. Skill v7 covers resume selection, runtime use, and generated
+UUIDs; stock v6 upgrades preserve custom skills. Plugin regeneration identifies
+a different pinned runtime without modifying its files. No new tool, dependency,
+or storage migration was added. Native Claude retesting remains pending because
+the client is unavailable in this follow-up environment.
+
+Follow-up validation on `66dafb6` plus these working-tree changes: **403 passed,
+0 skipped in 731.65 seconds**, Windows 10 (10.0.19045), Python 3.12.14, MCP SDK
+2.2.0, Git 2.49.0.windows.1. The full suite includes real stdio restart,
+full/partial commits, Git-only clone recall, and generated-plugin indexing with
+two Python environments. The independent review found no actionable issues;
+canonical/plugin skill equality, local documentation links, and whitespace checks
+passed. Earlier full-suite and isolated results above retain their original counts.
+
 Antigravity CLI, other platforms, cross-client handoff, and native lifecycle
 hooks are separate follow-up checks for the scoped Windows release. The
 [remaining integration checklist](RELEASE_INTEGRATION_CHECKLIST.md) tracks
-the required Claude project/plugin checks. Detailed reports and development
+the affected Claude retests. Detailed reports and development
 plans stay local; this summary and the checklist are the public status record.
 
 ## v0.1.1 development milestones - superseded by v0.2.0

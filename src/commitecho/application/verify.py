@@ -10,7 +10,7 @@ from typing import Any
 
 from commitecho.domain.models import BindingOutcome, ChangeStatus, CommitRecord
 from commitecho.git.adapter import GitAdapter, build_code_manifest, fingerprint_manifest
-from commitecho.storage.repository import update_change_status
+from commitecho.storage.repository import get_decision_state, update_change_status
 
 
 class VerifyService:
@@ -206,17 +206,24 @@ class VerifyService:
         )
         self._index_conn.commit()
 
-        if outcome == BindingOutcome.EXACT and draft_row is not None:
+        if outcome == BindingOutcome.EXACT and local_preparation_verified:
             with self._conn:
+                self._conn.execute("BEGIN IMMEDIATE")
                 pending = self._conn.execute(
                     "SELECT 1 FROM changes WHERE change_id = ? AND status = 'prepared' "
+                    "AND worktree_id = ? "
                     "AND ? = (SELECT record_id FROM commit_records WHERE change_id = ? "
                     "ORDER BY rowid DESC LIMIT 1)",
-                    (record.change_id, record.record_id, record.change_id),
+                    (record.change_id, self._git.repo_info.worktree_id, record.record_id, record.change_id),
                 ).fetchone()
                 if pending:
+                    remaining = get_decision_state(
+                        self._conn, self._git, record.change_id, self._index_conn
+                    )["unpublished_revision_ids"]
+                    status = ChangeStatus.OPEN if keep_open or remaining else ChangeStatus.COMMITTED
                     update_change_status(self._conn, record.change_id,
-                                         ChangeStatus.OPEN if keep_open else ChangeStatus.COMMITTED)
+                                         status)
+                    result["details"].update(remaining_revision_ids=remaining, change_status=status.value)
 
         return result
 
