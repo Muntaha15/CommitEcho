@@ -33,11 +33,34 @@ warning because the isolated harness omitted pytest-asyncio; these synchronous
 tests execute their live async flows directly. This is separate from the full
 MCP 2.2.0 suite. Metadata, canonical/plugin skill equality, public local links,
 and whitespace checks passed. The local ignored stock skill was refreshed to
-v6; automatic loading in a new native client session remains a UAT check.
+v6; automatic loading is checked in a new native client session.
 
-Live UAT is delegated to testers using a fresh clone and the
-[Antigravity and Claude Code checklist](RELEASE_UAT_CHECKLIST.md). Revised
-Claude v6 project/plugin capture remains a release qualification gate.
+### Client integration testing
+
+These are developer-run checks of client setup, MCP tools, capture, commit
+verification, indexing, and history retrieval. Live client results and automated
+server/protocol results retain their separate scopes.
+
+| Client | Recorded integration results |
+|---|---|
+| Codex | Windows interactive CLI capture, fixture commit, exact verification, indexing, and fresh-process recall passed on 2026-10-03. |
+| Antigravity IDE | The developer accepted the live Phase 1/2 results and automated fixture checks for this candidate on 2026-10-04, including capture, exact verification, indexing, restart recovery, fresh-chat recall, and a linked worktree with spaces. |
+| Claude Code | Earlier Windows print-mode capture/recall and plugin loading results are recorded. Skill v6 project and plugin-only capture, restart, and clone recall remain the required live release checks. |
+| Copilot VS Code | Generated configuration and protocol checks are covered; interactive client checks remain pending. |
+
+The live Antigravity fixture commit is
+`6ae2f52b2e14f25b5e235edeb11d2fbfb7297744`, carrying record
+`b29a13ac-9e1e-4db3-a7d4-50fc6fc2a92f`. Its test evidence is attributed to
+`client="antigravity"` and `origin="agent_reported"`. The reported IDE
+verification returned `exact` and indexing completed. After IDE restart, open
+change `58d1a1c6-8779-4ac7-aa95-9c4318c5d63b` was recovered and the committed
+decision was recalled through native MCP tools.
+
+Antigravity CLI, other platforms, cross-client handoff, and native lifecycle
+hooks are separate follow-up checks for the scoped Windows release. The
+[remaining integration checklist](RELEASE_INTEGRATION_CHECKLIST.md) tracks
+the required Claude project/plugin checks. Detailed reports and development
+plans stay local; this summary and the checklist are the public status record.
 
 ## v0.1.1 development milestones - superseded by v0.2.0
 
@@ -53,7 +76,7 @@ rejected-alternative example; exact stock v5 skills upgrade safely and custom
 skills stay protected. No dependency or storage migration is added.
 Supplied round 2 evidence confirms skill v5 project capture and plugin loading
 with index-only recall. Revised live v6 project/plugin capture remains pending
-because Claude is unavailable locally; see the updated UAT report.
+because Claude is unavailable locally.
 
 Remediation implementation `bfa2b5a`: **285 passed, 1 skipped in 379.19 seconds**
 on Windows with Python 3.12.14, MCP SDK 2.2.0, and Git 2.49.0.windows.1;
@@ -67,8 +90,7 @@ passed, and the milestone's CommitEcho binding verified `exact`.
 The 2026-10-03 multi-client review repairs setup preservation, strict Git gate behavior, indexing deadlines,
 and plugin ownership; it does not extend those earlier sessions to revised
 discovery paths or native hooks. Four configuration profiles now include
-Claude Code. Revised qualification is tracked in [CAPABILITY_LEDGER.md](CAPABILITY_LEDGER.md)
-and findings/repairs in [MULTI_CLIENT_INTEGRATION_REVIEW.md](MULTI_CLIENT_INTEGRATION_REVIEW.md).
+Claude Code. Current integration status is summarized above.
 Claude interactive/plugin validation and native event tests remain pending.
 The repaired full suite passed 238 tests in 341.08 seconds; one new directory-
 symlink test skipped because this Windows account lacks creation permission.
@@ -76,8 +98,7 @@ All live MCP tests ran. No new dependency or storage migration was introduced.
 
 Later 2026-10-03 fixture runs add versioned evidence: interactive Codex CLI
 and Antigravity IDE completed capture, exact verification, process restart,
-and fresh-process recall after explicit indexing. See [Codex results](CODEX_LIVE_TEST.md)
-and [Antigravity results](ANTIGRAVITY_LIVE_TEST.md). The canonical skill at that point was
+and fresh-process recall after explicit indexing. The canonical skill at that point was
 version 4 and required indexing before recall; the portable plugin example used
 the same skill. Raw sessions and fixture repositories remain local.
 
@@ -88,11 +109,12 @@ requires Windows directory-symlink permission. Package/CLI version metadata,
 portable plugin generation, canonical skill content, and ignore rules also
 passed their checks.
 
-The supplied [Claude Code UAT report](CLAUDE_CODE_UAT_REPORT.md) records 12
+The supplied Claude Code integration test results record 12
 passing Windows CLI 2.1.286 print-mode checks with skill v4 and local approval,
 including organic activation and fresh-process recall. Its reported 242-test
-result and source baseline have not been independently reproduced here; see
-the capability ledger for scope and the baseline discrepancy.
+result and source baseline have not been independently reproduced here. The
+reported base `69df403` declares v0.1.0, so its exact tested working-tree state
+remains unverified.
 
 Our independent follow-up adds Claude to the generic stdio restart regression,
 documents the observed `pending` status, and prints setup approval guidance

@@ -9,7 +9,18 @@ dist/
 tests/fixtures/repos/
 tests/fixtures/fixture_manifest.json
 AUDIT_ACTIONS.md
-/CLAUDE_CODE_UAT_ACTION_PLAN.md
+
+# Local development plans and detailed integration reports
+/ANTIGRAVITY_IDE_INTEGRATION_REPORT.md
+/ANTIGRAVITY_LIVE_TEST.md
+/CAPABILITY_LEDGER.md
+/CLAUDE_CODE_INTEGRATION_ACTION_PLAN.md
+/CLAUDE_CODE_INTEGRATION_REPORT.md
+/CLAUDE_CODE_LIVE_TEST.md
+/CODEX_LIVE_TEST.md
+/MULTI_CLIENT_INTEGRATION_PLAN.md
+/MULTI_CLIENT_INTEGRATION_REVIEW.md
+/V0_2_0_IMPLEMENTATION_PLAN.md
 docs/
 
 # Agent client configs generated during local setup/testing

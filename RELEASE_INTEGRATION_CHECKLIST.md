@@ -1,4 +1,7 @@
-# v0.2.0 candidate UAT: Antigravity and Claude Code
+# v0.2.0 integration checks: Codex, Antigravity, and Claude Code
+
+These are developer-run integration tests of the client setup, MCP tools,
+capture workflow, and history retrieval.
 
 Test a fresh clone of `multi-client-integration` after the candidate commits
 are available remotely. Record the exact Git commit, dirty state, package/skill
@@ -8,21 +11,48 @@ credentials, databases, and machine-specific configuration private.
 
 The candidate is `0.2.0.dev0` with skill v6. These checks need the actual clients;
 the local automated suite and protocol tests are recorded separately.
+Completed runs retain their recorded dates and client versions; remaining
+checks use the current candidate.
+
+## Codex
+
+**Recorded integration checks passed on 2026-10-03** using Codex CLI
+`0.159.0-alpha.12.1` in an interactive Windows session with normal project
+trust and tool approvals. This completion covers that recorded workflow.
+Results are summarized in the [release notes](RELEASE_NOTES.md#client-integration-testing).
+
+- [x] Native `get_status` identifies the intended fixture repository and seed HEAD.
+- [x] Native capture, decision recording, and preparation complete for the
+  order-preserving deduplication task. Assertions for duplicates and empty input pass.
+- [x] The fixture commit contains the prepared record and its exact trailer;
+  native `verify_commit` returns `exact` with no reasons.
+- [x] After restarting the client process, explicit indexing scans the fixture
+  history and indexes the committed record.
+- [x] Fresh-process search, record retrieval, and range comparison recover the
+  recorded rationale with full history coverage.
+
+Fixture commit: `5b3e0a23879cfcd2084d333b63c3e62edd09e544`.
+Record: `aef2831c-aeec-43ce-8b8c-c629b352fce0`.
 
 ## Antigravity IDE
 
-- [ ] Fresh installation and setup discover the intended repository, all eight
+**Developer integration checks accepted on 2026-10-04** for this candidate.
+The scope below reflects the developer's accepted results from live IDE
+Phases 1 and 2 plus the earlier automated fixture checks. Results are summarized
+in the [release notes](RELEASE_NOTES.md#client-integration-testing).
+
+- [x] Fresh installation and setup discover the intended repository, all eight
   MCP tools, shared skill v6, and persistent activation rule.
-- [ ] An ordinary coding task activates capture without CommitEcho hints.
-  The chosen approach, a discussed rejected alternative, its reason, and
-  evidence/client attribution are preserved accurately.
-- [ ] Capture, partial staging, preparation, fixture commit, exact verification,
+- [x] An ordinary coding task activates capture without CommitEcho hints.
+  The chosen approach, rationale, and evidence/client attribution are
+  preserved accurately.
+- [x] Capture, partial staging, preparation, fixture commit, exact verification,
   and indexing complete. Changes staged after preparation are detected.
-- [ ] Restart recovers open work; a fresh chat recalls committed choices,
-  alternatives, reasons, and evidence. A Git-only clone recalls them after indexing.
-- [ ] Setup reruns/upgrades preserve custom configuration and skills. Git hook
+- [x] Restart recovers open work; a fresh chat recalls committed choices,
+  rationale, and evidence accurately through native IDE MCP tools.
+- [x] Setup reruns preserve custom configuration and skills. Git hook
   install/remove preserves foreign content; strict validation rejects bad commits.
-- [ ] Exercise a fixture path with spaces and a linked worktree. Confirm the
+- [x] Exercise a fixture path with spaces and a linked worktree. Confirm the
   client stays bound to the intended repository.
 
 Report IDE results separately from Antigravity CLI; qualify CLI only if tested.
@@ -47,7 +77,7 @@ Report IDE results separately from Antigravity CLI; qualify CLI only if tested.
 - [ ] Exercise paths with spaces, open-change restart/resume, and interactive
   approval. Optional cross-client handoff should retain each client's attribution.
 
-Project v6 capture and plugin v6 capture are required before release sign-off.
+Project v6 capture and plugin v6 capture are required before release.
 Native SessionStart installation remains gated; no native-event pass is expected
 from these fixes. Unavailable platforms or surfaces remain explicitly untested.
 

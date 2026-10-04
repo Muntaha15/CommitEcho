@@ -4,7 +4,11 @@ Preserve the decisions behind code changes and recall them through your coding a
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.2.0 in development (`0.2.0.dev0`); v0.1.0 is the published release.** This candidate adds Claude setup/plugin generation, an opt-in Git message gate, bounded indexing, and safer setup/cleanup and plugin upgrades. Four local client configuration profiles are available. Recorded Codex and Antigravity workflows and supplied Claude print-mode/plugin-loading results retain their original scope; revised skill v6 Claude project/plugin capture and the latest Antigravity IDE UAT are pending. See the [UAT checklist](RELEASE_UAT_CHECKLIST.md), [Codex results](CODEX_LIVE_TEST.md), [Antigravity results](ANTIGRAVITY_LIVE_TEST.md), [Claude Code report](CLAUDE_CODE_LIVE_TEST.md), and [capability ledger](CAPABILITY_LEDGER.md).
+**Status: v0.2.0 in development (`0.2.0.dev0`); v0.1.0 is the published release.** This candidate adds Claude setup/plugin generation, an opt-in Git message gate, bounded indexing, and safer setup/cleanup and plugin upgrades. Four local client configuration profiles are available. Antigravity IDE integration checks were accepted by the developer on 2026-10-04; revised skill v6 Claude project/plugin checks remain pending. See the [client integration results](RELEASE_NOTES.md#client-integration-testing) and [remaining integration checklist](RELEASE_INTEGRATION_CHECKLIST.md).
+
+Client reports document developer-run integration tests of MCP tools and agent
+workflows. Automated server/protocol results are recorded separately from live
+Codex, Antigravity, and Claude Code sessions.
 
 ## Install
 
@@ -280,7 +284,7 @@ first; a `disabledMcpjsonServers` entry can still reject the server. Setup print
 guidance but never writes approval settings. See Claude's
 [approval and trust rules](https://code.claude.com/docs/en/mcp#project-server-approvals-and-workspace-trust).
 
-The [supplied UAT report](CLAUDE_CODE_UAT_REPORT.md) observed Claude CLI 2.1.286
+The supplied integration test results observed Claude CLI 2.1.286
 reporting `pending` after local approval even though tools worked later in the
 session. Check the effective server binding and make a real `get_status` call;
 compare `head_oid` with `git rev-parse HEAD` in the intended repository. A startup
