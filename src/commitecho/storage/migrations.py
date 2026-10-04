@@ -231,6 +231,16 @@ DELETE FROM indexed_records;
 DELETE FROM indexed_commits;
 """
 
+_DRAFTS_V5 = """
+-- Authenticated local publication is draft lifecycle state, not a disposable index.
+CREATE TABLE IF NOT EXISTS verified_bindings (
+    record_id TEXT NOT NULL REFERENCES commit_records(record_id),
+    commit_oid TEXT NOT NULL,
+    keep_open INTEGER CHECK (keep_open IN (0, 1)), -- NULL: legacy request was not persisted
+    PRIMARY KEY (record_id, commit_oid)
+);
+"""
+
 # ---------------------------------------------------------------------------
 # Migration runner
 # ---------------------------------------------------------------------------
@@ -244,6 +254,8 @@ _SCHEMAS: dict[tuple[str, int], str] = {
     ("index", 3): _INDEX_V3,
     ("drafts", 4): "SELECT 1;",
     ("index", 4): _INDEX_V4,
+    ("drafts", 5): _DRAFTS_V5,
+    ("index", 5): "SELECT 1;",
 }
 
 

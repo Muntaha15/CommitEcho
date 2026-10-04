@@ -241,32 +241,18 @@ def get_decision_state(conn, git, change_id: str, index_conn=None) -> dict[str, 
         revisions.append(item)
 
     published = set()
-    records = conn.execute(
-        "SELECT record_id, selected_revision_ids FROM commit_records WHERE change_id = ?",
+    bindings = conn.execute(
+        "SELECT v.commit_oid, r.selected_revision_ids FROM verified_bindings v "
+        "JOIN commit_records r ON r.record_id = v.record_id WHERE r.change_id = ?",
         (change_id,),
     ).fetchall()
-    if records:
-        from commitecho.storage.db import open_index_db
-
-        owned_index = index_conn is None
-        index_conn = index_conn if index_conn is not None else open_index_db(git.repo_info.common_dir)
-        try:
-            head = git.head_oid()
-            reachable, coverage = git.reachable_commit_oids(head) if head else ([], "full")
-            reachable = set(reachable) if coverage == "full" else set()
-            for record in records:
-                for binding in index_conn.execute(
-                    "SELECT commit_oid, validation_details FROM bindings WHERE record_id = ? AND outcome = 'exact'",
-                    (record["record_id"],),
-                ):
-                    if not json.loads(binding["validation_details"]).get("local_preparation_verified"):
-                        continue
-                    if binding["commit_oid"] in reachable:
-                        published.update(json.loads(record["selected_revision_ids"]))
-                        break
-        finally:
-            if owned_index:
-                index_conn.close()
+    if bindings:
+        head = git.head_oid()
+        reachable, _coverage = git.reachable_commit_oids(head) if head else ([], "full")
+        reachable = set(reachable)
+        for binding in bindings:
+            if binding["commit_oid"] in reachable:
+                published.update(json.loads(binding["selected_revision_ids"]))
     return {
         "decision_revisions": revisions,
         "unpublished_revision_ids": [r["revision_id"] for r in revisions if r["revision_id"] not in published],

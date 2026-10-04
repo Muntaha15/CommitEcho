@@ -91,6 +91,21 @@ hooks are separate follow-up checks for the scoped Windows release. The
 the affected Claude retests. Detailed reports and development
 plans stay local; this summary and the checklist are the public status record.
 
+Publication recovery follow-up (2026-10-04): exact local verification is now
+stored in private drafts, preserving it when the disposable index is rebuilt.
+Draft schema v5 imports authenticated results from an existing older index;
+legacy hold intent remains unknown until the latest preparation is reverified.
+Known reachable commits count in shallow history, and partial commits can finish
+in either verification order. Newer unverified preparations, remaining decisions,
+and the owner's `keep_open` choice remain protected. Restart MCP servers after
+upgrading. No new dependency or MCP tool is added.
+
+Recovery validation on `800a65d` plus these changes: **421 passed, 0 skipped in
+705.55 seconds**, using the short Windows temporary root `.commitecho/r421`.
+All real MCP stdio tests ran. The independent review found no additional
+actionable issues. The earlier long-root run and its fixture failures are
+recorded separately in the local Claude report.
+
 ## v0.1.1 development milestones - superseded by v0.2.0
 
 Package version: `0.1.1.dev0`. This work has not been released; v0.1.0 remains

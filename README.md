@@ -75,7 +75,9 @@ commitecho verify <commit_oid> --keep-open  # another commit will follow for thi
 
 Returns one of `exact`, `declared_changed`, `contained_only`, `unverifiable`, or `invalid` and explains why. `exact` means the committed record, trailer, parent, and code fingerprint agree. When the local draft exists, verification also compares the committed bytes with the prepared digest; `details.local_preparation_verified` reports that stronger check. A fresh clone can establish a self-consistent `exact` binding, but cannot authenticate the original preparation or the truth of the rationale.
 
-An exact local verification closes the prepared change by default. Use `--keep-open` (or MCP `keep_open: true`) for an intermediate commit; it returns the change to `open` so the next commit can use the same change ID. Failed verification leaves it `prepared`. Status lists abandoned changes separately from open work.
+An exact local verification closes open or prepared work once the latest preparation is verified in the current history and no current decisions remain unpublished. Partial commits keep the change open; they can be verified in either order. Use `--keep-open` (or MCP `keep_open: true`) when more work will follow. Verification in another worktree preserves the owner's choice. Failed verification leaves the status unchanged; abandoned changes stay separate from open work.
+
+Local publication proof is stored in private `drafts.sqlite`, so rebuilding `index.sqlite` preserves it. The v5 draft migration imports authenticated verification results from an existing older index. If that cache was already deleted, reverify the earlier commits. Legacy `keep_open` intent was not stored; reverify the latest preparation to establish whether the change can close. Restart running MCP servers after upgrading.
 
 ### Show a record
 

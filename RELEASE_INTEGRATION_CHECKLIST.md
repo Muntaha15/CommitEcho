@@ -104,6 +104,15 @@ remains pending because the client is unavailable on the follow-up host.
 Native SessionStart installation remains gated; no native-event pass is expected
 from these fixes. Unavailable platforms or surfaces remain explicitly untested.
 
+Publication recovery also covers shallow-history commits, index deletion/rebuild,
+and partial commits verified in either order. Draft schema v5 preserves local
+verification proof; restart MCP servers after upgrading. These automated checks
+do not change the remaining native Claude repeat.
+
+Recovery follow-up full suite: **421 passed, 0 skipped in 705.55 seconds** on
+2026-10-04, including the real MCP stdio checks. The Windows run used a short
+temporary root to avoid Git filename-length failures in the earlier run.
+
 ## Return report
 
 For each item: pass, fail, or untested, with a short observed result. Include

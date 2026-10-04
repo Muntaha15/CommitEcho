@@ -188,7 +188,43 @@ class VerifyService:
             },
         )
 
-        # Persist binding in the index
+        if outcome == BindingOutcome.EXACT and local_preparation_verified:
+            with self._conn:
+                self._conn.execute("BEGIN IMMEDIATE")
+                owned = self._conn.execute(
+                    "SELECT status FROM changes WHERE change_id = ? AND worktree_id = ?",
+                    (record.change_id, self._git.repo_info.worktree_id),
+                ).fetchone()
+                self._conn.execute(
+                    f"INSERT OR {'REPLACE' if owned else 'IGNORE'} INTO verified_bindings "
+                    "(record_id, commit_oid, keep_open) "
+                    "VALUES (?, ?, ?)",
+                    (effective_record_id, full_oid, int(keep_open) if owned else None),
+                )
+                if owned and owned["status"] in ("open", "prepared"):
+                    latest_bindings = self._conn.execute(
+                        "SELECT commit_oid, keep_open FROM verified_bindings WHERE record_id = "
+                        "(SELECT record_id FROM commit_records WHERE change_id = ? "
+                        "ORDER BY rowid DESC LIMIT 1) ORDER BY rowid DESC",
+                        (record.change_id,),
+                    ).fetchall()
+                    head = self._git.head_oid()
+                    reachable = set(self._git.reachable_commit_oids(head)[0]) if head else set()
+                    latest = next((binding for binding in latest_bindings
+                                   if binding["commit_oid"] in reachable), None)
+                    if latest is not None:
+                        remaining = get_decision_state(
+                            self._conn, self._git, record.change_id
+                        )["unpublished_revision_ids"]
+                        # Unknown legacy intent stays open until the latest record is reverified.
+                        stay_open = keep_open or latest["keep_open"] != 0 or bool(remaining)
+                        status = ChangeStatus.OPEN if stay_open else ChangeStatus.COMMITTED
+                        update_change_status(self._conn, record.change_id, status)
+                        result["details"].update(
+                            remaining_revision_ids=remaining, change_status=status.value
+                        )
+
+        # Persist the disposable history projection after authoritative draft state.
         self._index_conn.execute(
             """
             INSERT OR REPLACE INTO bindings
@@ -205,25 +241,6 @@ class VerifyService:
             ),
         )
         self._index_conn.commit()
-
-        if outcome == BindingOutcome.EXACT and local_preparation_verified:
-            with self._conn:
-                self._conn.execute("BEGIN IMMEDIATE")
-                pending = self._conn.execute(
-                    "SELECT 1 FROM changes WHERE change_id = ? AND status = 'prepared' "
-                    "AND worktree_id = ? "
-                    "AND ? = (SELECT record_id FROM commit_records WHERE change_id = ? "
-                    "ORDER BY rowid DESC LIMIT 1)",
-                    (record.change_id, self._git.repo_info.worktree_id, record.record_id, record.change_id),
-                ).fetchone()
-                if pending:
-                    remaining = get_decision_state(
-                        self._conn, self._git, record.change_id, self._index_conn
-                    )["unpublished_revision_ids"]
-                    status = ChangeStatus.OPEN if keep_open or remaining else ChangeStatus.COMMITTED
-                    update_change_status(self._conn, record.change_id,
-                                         status)
-                    result["details"].update(remaining_revision_ids=remaining, change_status=status.value)
 
         return result
 

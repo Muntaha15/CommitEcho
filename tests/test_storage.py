@@ -49,6 +49,7 @@ class TestMigrations:
         assert "changes" in tables
         assert "decision_revisions" in tables
         assert "commit_records" in tables
+        assert "verified_bindings" in tables
 
     def test_index_schema_applied(self, index_db):
         tables = {
@@ -187,3 +188,84 @@ class TestOperationIdempotency:
         record_operation(mem_db, "op-003", "begin_change", {"repository_id": "r1", "title": "a"}, {})
         with pytest.raises(ValueError, match="different payload"):
             check_operation(mem_db, "op-003", "begin_change", {"repository_id": "r1", "title": "b"})
+
+
+def test_v4_upgrade_backfills_only_authenticated_local_bindings(tmp_path):
+    import json
+    from commitecho.domain.models import CommitRecord, PreparedFor
+    from commitecho.storage.repository import insert_commit_record
+
+    drafts = open_drafts_db(tmp_path)
+    repo = Repository(common_dir=str(tmp_path))
+    upsert_repository(drafts, repo)
+    change = Change(title="old partial change", worktree_id="main")
+    insert_change(drafts, change, repo.installation_id)
+    record = CommitRecord(change_id=change.change_id, summary="prepared",
+                          prepared_for=PreparedFor(parent_oid="a" * 40,
+                                                   code_manifest_sha256="b" * 64))
+    insert_commit_record(drafts, record)
+    unsigned = record.model_copy(update={"record_id": "unsigned"})
+    insert_commit_record(drafts, unsigned)
+    drafts.execute("UPDATE commit_records SET record_sha256 = NULL WHERE record_id = 'unsigned'")
+    drafts.execute("DROP TABLE verified_bindings")
+    drafts.execute("UPDATE schema_meta SET value = '4' WHERE key = 'version'")
+    drafts.execute("DELETE FROM schema_meta WHERE key = 'verified_bindings_backfilled'")
+    drafts.commit()
+    drafts.close()
+
+    index = open_index_db(tmp_path)
+    rows = [
+        (record.record_id, "a" * 40, "exact", json.dumps({"local_preparation_verified": True})),
+        (record.record_id, "b" * 40, "exact", json.dumps({"local_preparation_verified": True})),
+        (record.record_id, "c" * 40, "declared_changed", json.dumps({"local_preparation_verified": True})),
+        (record.record_id, "d" * 40, "exact", "{}"),
+        (record.record_id, "e" * 40, "exact", "invalid JSON"),
+        (record.record_id, "f" * 40, "exact", "[]"),
+        ("foreign", "1" * 40, "exact", json.dumps({"local_preparation_verified": True})),
+        ("unsigned", "2" * 40, "exact", json.dumps({"local_preparation_verified": True})),
+    ]
+    for number, row in enumerate(rows):
+        index.execute("INSERT INTO bindings VALUES (?, ?, ?, ?, ?, 'now')", (str(number), *row))
+    index.commit()
+    index.close()
+
+    drafts = open_drafts_db(tmp_path)
+    try:
+        assert [tuple(row) for row in drafts.execute(
+            "SELECT record_id, commit_oid, keep_open FROM verified_bindings ORDER BY commit_oid"
+        )] == [(record.record_id, "a" * 40, None), (record.record_id, "b" * 40, None)]
+        assert drafts.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()[0] == "5"
+    finally:
+        drafts.close()
+
+
+@pytest.mark.parametrize("cache", [None, b"broken SQLite cache"])
+def test_drafts_upgrade_tolerates_missing_or_corrupt_index(tmp_path, cache):
+    drafts = open_drafts_db(tmp_path)
+    drafts.execute("DROP TABLE verified_bindings")
+    drafts.execute("UPDATE schema_meta SET value = '4' WHERE key = 'version'")
+    drafts.execute("DELETE FROM schema_meta WHERE key = 'verified_bindings_backfilled'")
+    drafts.commit()
+    drafts.close()
+    if cache is not None:
+        directory = tmp_path / "commitecho"
+        (directory / "index.sqlite").write_bytes(cache)
+    drafts = open_drafts_db(tmp_path)
+    try:
+        assert drafts.execute("SELECT count(*) FROM verified_bindings").fetchone()[0] == 0
+        marker = drafts.execute(
+            "SELECT 1 FROM schema_meta WHERE key = 'verified_bindings_backfilled'"
+        ).fetchone()
+        assert bool(marker) is (cache is None)
+    finally:
+        drafts.close()
+    if cache is not None:
+        (tmp_path / "commitecho" / "index.sqlite").unlink()
+        open_index_db(tmp_path).close()
+        drafts = open_drafts_db(tmp_path)
+        try:
+            assert drafts.execute(
+                "SELECT 1 FROM schema_meta WHERE key = 'verified_bindings_backfilled'"
+            ).fetchone()
+        finally:
+            drafts.close()
