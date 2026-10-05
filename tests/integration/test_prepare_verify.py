@@ -113,7 +113,7 @@ def test_change_completion_and_multi_commit(tmp_path):
     verify = VerifyService(drafts, index, git)
     first_oid = None
 
-    for number, keep_open in ((1, True), (2, False)):
+    for number, keep_open in ((1, False), (2, False)):
         path = f"code{number}.py"
         (repo / path).write_text(f"value = {number}\n")
         subprocess.run(["git", "add", path], cwd=repo, capture_output=True, check=True)
@@ -122,6 +122,7 @@ def test_change_completion_and_multi_commit(tmp_path):
             selected_revision_ids=[revisions[number - 1]], summary=f"commit {number}",
             operation_id=f"prepare-{number}",
         )
+        assert prepared["omitted_revision_ids"] == ([revisions[1]] if number == 1 else [])
         if first_oid:
             assert verify.verify_commit(commit_oid=first_oid)["outcome"] == "exact"
             assert drafts.execute("SELECT status FROM changes WHERE change_id = ?", (change_id,)).fetchone()[0] == "prepared"
@@ -132,7 +133,7 @@ def test_change_completion_and_multi_commit(tmp_path):
         assert verify.verify_commit(commit_oid=_head(repo), keep_open=keep_open)["outcome"] == "exact"
         if number == 1:
             first_oid = _head(repo)
-        expected = "open" if keep_open else "committed"
+        expected = "open" if number == 1 else "committed"
         assert drafts.execute("SELECT status FROM changes WHERE change_id = ?", (change_id,)).fetchone()[0] == expected
 
     abandoned_id = capture.begin_change(title="abandoned", client="test", operation_id="abandoned")["change_id"]
@@ -141,6 +142,119 @@ def test_change_completion_and_multi_commit(tmp_path):
     status = RetrieveService(drafts, index, git).get_status()
     assert status["open_changes"] == []
     assert [c["change_id"] for c in status["abandoned_changes"]] == [abandoned_id]
+
+
+def test_restart_recovers_decisions_and_partial_commit_keeps_change_open(tmp_path):
+    from commitecho.application.capture import CaptureService
+    from commitecho.application.prepare import PrepareService
+    from commitecho.application.retrieve import RetrieveService
+    from commitecho.application.verify import VerifyService
+
+    repo = _make_repo(tmp_path, "repository with spaces")
+    git, drafts, index = _open_services(repo)
+    capture = CaptureService(drafts, git)
+    begin = capture.begin_change(title="resume", client="claude_code", operation_id="begin")
+    change_id = begin["change_id"]
+    evidence_id = str(uuid.uuid4())
+    first = capture.record_decisions(
+        change_id=change_id, expected_revision=0, operation_id="first",
+        decisions=[{"problem": "deduplicate", "choice": "dictionary", "rationale": "preserve order",
+                    "disposition": "selected", "code_scope": {"paths": ["code.py"]},
+                    "alternatives": [{"choice": "set", "reason": "loses order",
+                                      "evidence_ids": [evidence_id]}]}],
+        evidence=[{"evidence_id": evidence_id, "kind": "test_result", "client": "claude_code",
+                   "origin": "agent_reported", "content": "order preserved"}],
+    )["revision_ids"][0]
+    drafts.close()
+    index.close()
+
+    git, drafts, index = _open_services(repo)
+    capture = CaptureService(drafts, git)
+    resumed = capture.begin_change(title="resume", client="codex", operation_id="resume",
+                                   prior_change_id=change_id)
+    assert resumed["revision_counter"] == 1
+    assert resumed["unpublished_revision_ids"] == [first]
+    assert resumed["decision_revisions"][0]["alternatives"][0]["reason"] == "loses order"
+    assert resumed["decision_revisions"][0]["alternatives"][0]["evidence_ids"] == [evidence_id]
+    assert capture.begin_change(title="resume", client="claude_code", operation_id="begin") == begin
+    second = capture.record_decisions(
+        change_id=change_id, expected_revision=1, operation_id="second",
+        decisions=[{"problem": "types", "choice": "raise TypeError", "rationale": "explicit error",
+                    "disposition": "selected", "code_scope": {"paths": ["code.py"]}}],
+    )["revision_ids"][0]
+    (repo / "code.py").write_text("value = 1\n")
+    subprocess.run(["git", "add", "code.py"], cwd=repo, capture_output=True, check=True)
+    prepare = PrepareService(drafts, git)
+    partial = prepare.prepare_commit(change_id=change_id, expected_revision=2,
+        selected_revision_ids=[second], summary="types", operation_id="partial")
+    assert partial["uncovered_paths"] == []
+    assert partial["omitted_revision_ids"] == [first]
+    subprocess.run(["git", "add", partial["record_path"]], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", f"types\n\n{partial['trailer']}"],
+                   cwd=repo, capture_output=True, check=True)
+    verified = VerifyService(drafts, index, git).verify_commit(commit_oid=_head(repo))
+    assert verified["outcome"] == "exact"
+    assert verified["details"]["change_status"] == "open"
+    assert verified["details"]["remaining_revision_ids"] == [first]
+    scoped = RetrieveService(drafts, index, git).get_status(change_id)["open_changes"][0]
+    assert scoped["revision_counter"] == 2
+    assert scoped["unpublished_revision_ids"] == [first]
+    assert {r["revision_id"] for r in scoped["decision_revisions"]} == {first, second}
+
+    other = tmp_path / "linked worktree"
+    subprocess.run(["git", "worktree", "add", "-b", "other", str(other)],
+                   cwd=repo, capture_output=True, check=True)
+    other_git, other_drafts, other_index = _open_services(other)
+    assert RetrieveService(other_drafts, other_index, other_git).get_status(change_id)["open_changes"] == []
+
+    # An indexed history rebuild must not treat prior exact bindings as uncommitted.
+    from click.testing import CliRunner
+    from commitecho.transports.cli import main
+    assert CliRunner().invoke(main, ["index", "--repo", str(repo)]).exit_code == 0
+    complete = prepare.prepare_commit(change_id=change_id, expected_revision=2,
+        selected_revision_ids=[first], summary="ordering", operation_id="complete")
+    assert complete["omitted_revision_ids"] == []
+    subprocess.run(["git", "add", complete["record_path"]], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", f"ordering\n\n{complete['trailer']}"],
+                   cwd=repo, capture_output=True, check=True)
+    verified = VerifyService(drafts, index, git).verify_commit(commit_oid=_head(repo))
+    assert verified["details"]["change_status"] == "committed"
+    assert verified["details"]["remaining_revision_ids"] == []
+
+
+def test_late_and_superseding_revisions_remain_recoverable_after_verification(tmp_path):
+    from commitecho.application.capture import CaptureService
+    from commitecho.application.prepare import PrepareService
+    from commitecho.application.retrieve import RetrieveService
+    from commitecho.application.verify import VerifyService
+
+    repo = _make_repo(tmp_path)
+    git, drafts, index = _open_services(repo)
+    capture = CaptureService(drafts, git)
+    change_id = capture.begin_change(title="revisions", client="test", operation_id="begin")["change_id"]
+    first = capture.record_decisions(change_id=change_id, expected_revision=0, operation_id="first",
+        decisions=[{"problem": "p", "choice": "old", "rationale": "r"}])["revision_ids"][0]
+    prepare = PrepareService(drafts, git)
+    original = prepare.prepare_commit(change_id=change_id, expected_revision=1,
+        selected_revision_ids=[first], summary="original", operation_id="original")
+    late = capture.record_decisions(change_id=change_id, expected_revision=1, operation_id="late",
+        decisions=[{"predecessor_revision_ids": [first], "problem": "p", "choice": "new", "rationale": "revised"},
+                   {"problem": "another", "choice": "late", "rationale": "r"}])["revision_ids"]
+    subprocess.run(["git", "add", original["record_path"]], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", f"original\n\n{original['trailer']}"],
+                   cwd=repo, capture_output=True, check=True)
+    verified = VerifyService(drafts, index, git).verify_commit(commit_oid=_head(repo))
+    assert verified["details"]["change_status"] == "open"
+    assert verified["details"]["remaining_revision_ids"] == late
+    current = RetrieveService(drafts, index, git).get_status(change_id)["open_changes"][0]
+    assert [r["revision_id"] for r in current["decision_revisions"]] == late
+    replacement = prepare.prepare_commit(change_id=change_id, expected_revision=2,
+        selected_revision_ids=late, summary="replacement", operation_id="replacement")
+    assert replacement["omitted_revision_ids"] == []
+    subprocess.run(["git", "add", replacement["record_path"]], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", f"replacement\n\n{replacement['trailer']}"],
+                   cwd=repo, capture_output=True, check=True)
+    assert VerifyService(drafts, index, git).verify_commit(commit_oid=_head(repo))["details"]["change_status"] == "committed"
 
 
 @pytest.mark.parametrize("summary,rationale,evidence_content,error", [
@@ -334,6 +448,7 @@ class TestPrepareVerifyRoundTrip:
         git2, drafts2, index2 = _open_services(repo)
         result = VerifyService(drafts2, index2, git2).verify_commit(commit_oid=commit_oid)
         assert result["outcome"] == "declared_changed"
+        assert drafts2.execute("SELECT status FROM changes WHERE change_id = ?", (change_id,)).fetchone()[0] == "prepared"
 
 
 class TestIndexChangedGuard:

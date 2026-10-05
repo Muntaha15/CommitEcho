@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "record_id": "a22d5528-5eca-4d29-a952-24a3f4d3d9b0",
+  "change_id": "0ac9d641-66a6-486e-a53b-89dc0f3305f0",
+  "summary": "Confine setup and Claude cleanup paths and preflight combined hook removal.",
+  "prepared_for": {
+    "parent_oid": "94ec480a5c5f1fe7ea43a9117d7a16fa3a503644",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "71926ed84cbfc059e22bd8793318ae24f2c1896d2475bd7ddcf717daf2cb617e"
+  },
+  "decisions": [
+    {
+      "decision_id": "210accb0-f5d4-4db4-aeee-154da8a407fc",
+      "revision_id": "5e1d9893-03db-4016-b51c-4534e8908660",
+      "predecessor_revision_ids": [
+        "6d46ffec-c73b-4258-8963-e5eb570c4e43",
+        "98a65b69-b78b-4953-9da3-a8f6cd1d727d"
+      ],
+      "disposition": "selected",
+      "problem": "R1/R2 cleanup escaped repository ownership and R4 combined cleanup mutated before validation.",
+      "choice": "Use shared candidate-and-parent confinement and preflight all selected setup/cleanup targets before mutation.",
+      "rationale": "Closes the reproduced external-link and predictable partial-cleanup failures while preserving custom content, linked roots, and existing Git-hook locality policy.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/integrations/profiles.py",
+          "src/commitecho/transports/cli.py",
+          "tests/conftest.py",
+          "tests/integration/test_setup.py",
+          "tests/integration/test_plugin_and_lifecycle.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "v020-focused-ownership",
+        "v020-parent-regression",
+        "v020-final-suite"
+      ],
+      "captured_at": "2026-10-03T20:34:16.394526Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "v020-parent-regression",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Setup subagent reported both real-junction back-link regressions failed the old helper, then passed after parent confinement; linked root remains accepted. Focused non-live setup: 103 passed, 9 actual WinError 1314 symlink skips, 8 live deselected in 24.69s. Full candidate suite restarted after repair; earlier interrupted run has no full-suite result.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T20:26:23.852629Z",
+      "verification_method": null
+    },
+    {
+      "evidence_id": "v020-focused-ownership",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Subagent-reported checks: setup 100 passed, 9 skipped, 8 deselected; all 18 real Windows junction cases passed. Skips: original external-directory symlink test and 8 external-file/dangling symlink cases, WinError 1314. Cleanup plus existing Git hooks 78 passed, no skips; 2 later invalid-parent cases passed separately. Tests use owned workspace temp to avoid default temporary-directory sandbox denial.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T20:17:48.007901Z",
+      "verification_method": null
+    },
+    {
+      "evidence_id": "v020-final-suite",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Final complete project suite: 377 passed, 9 skipped in 526.09s on Windows/Python3.12.14/MCP2.2.0. All MCP stdio and junction regressions executed. Skipped test_all_client_preflight_rejects_symlink_escaping_repository plus eight test_setup_rejects_external_legacy_file_symlink_before_writes parameters encountered actual WinError1314. Remedy Developer Mode/elevated shell. Earlier interrupted run and isolated passes are not counted.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T20:34:16.394526Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-03T20:34:29.566824Z"
+}

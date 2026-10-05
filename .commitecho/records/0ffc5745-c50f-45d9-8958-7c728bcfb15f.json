@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "record_id": "0ffc5745-c50f-45d9-8958-7c728bcfb15f",
+  "change_id": "6dce7ab4-f58a-42f7-96a7-b7496df1d989",
+  "summary": "Preserve verified publication across index rebuilds and shallow history, and complete partial work regardless of verification order.",
+  "prepared_for": {
+    "parent_oid": "800a65dfd6bfcfed95c79dc5c06f225adc516da3",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "28186845b587c190e8182993f340d3d42f8f918dec9d7661b31cad07ea1c4739"
+  },
+  "decisions": [
+    {
+      "decision_id": "5fcceeb7-4dd3-45c2-a2ab-a202193c7180",
+      "revision_id": "4624ad7a-2537-4b74-9b17-71d73d9bb461",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Publication state and completion should remain stable across shallow history, index rebuilds, and delayed verification.",
+      "choice": "Persist authenticated exact verification bindings in the private drafts database, use positively reachable commits even with partial history, and reconcile open work against the latest verified preparation.",
+      "rationale": "This keeps verification proof independent of the disposable search index and permits partial commits to complete in either verification order while protecting current revisions, worktree ownership, newer unverified preparations, and explicit keep-open intent.",
+      "alternatives": [
+        {
+          "choice": "Reconstruct all local verification proof by scanning Git whenever draft state is read",
+          "disposition": "rejected",
+          "reason": "Git alone does not retain local verification or keep-open intent, and repeated reconstruction adds work beyond the minimal recovery fix.",
+          "evidence_ids": []
+        }
+      ],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/storage/db.py",
+          "src/commitecho/storage/migrations.py",
+          "src/commitecho/storage/repository.py",
+          "src/commitecho/application/verify.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-04T12:26:57.516487Z"
+    },
+    {
+      "decision_id": "a1b067f5-e995-4f1f-9695-bbaa55dd9af9",
+      "revision_id": "994e0e63-7180-4d0e-be65-5e198f88cf7a",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Authenticated proof can be shared by linked worktrees while completion intent belongs to the worktree that owns the change.",
+      "choice": "Foreign verification inserts publication proof with unknown intent and preserves existing owner intent; only the owning worktree reconciles open or prepared changes.",
+      "rationale": "This preserves exact verification as a shared fact without allowing another worktree's default keep_open=False to close the owner's unfinished work. Legacy unknown intent stays open until the owner explicitly reverifies the latest preparation.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/application/verify.py",
+          "tests/integration/test_publication_recovery.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "e5b47169-226b-4eff-a780-306568c31bdf"
+      ],
+      "captured_at": "2026-10-04T12:36:09.010254Z"
+    },
+    {
+      "decision_id": "b36585ea-687c-4cf7-8dc2-9a4a7066ff34",
+      "revision_id": "b180bc60-0f17-4ab3-b269-2a993b2d012f",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Validate recovery behavior without conflating fixture failures, automated protocol coverage, and native client adherence.",
+      "choice": "Retain separate validation results, use a short Windows temporary root for the complete suite, and keep native Claude v7 retesting pending.",
+      "rationale": "The complete rerun exercises all421tests and real MCP transports. Earlier fixture failures remain documented rather than being counted as a clean run. New regressions are consolidated in one file; release notes and existing local Claude documents are updated without adding Markdown files or editing historical records.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "tests/integration/test_publication_recovery.py",
+          "tests/test_storage.py",
+          "README.md",
+          "RELEASE_NOTES.md",
+          "RELEASE_INTEGRATION_CHECKLIST.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "15a5199e-6a9c-43c3-86ba-8c9bddeef71e"
+      ],
+      "captured_at": "2026-10-04T13:01:24.356453Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "15a5199e-6a9c-43c3-86ba-8c9bddeef71e",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Full project-Python suite on 800a65d plus uncommitted recovery fixes: 421 passed, 0 skipped in 705.55 seconds. Command: .venv/Scripts/python.exe -m pytest -q -rs --basetemp .commitecho/r421 . All real MCP stdio checks and 15 new recovery cases ran. Existing verify/storage focused tests: 27 passed38.57s. Initial full long-root run:417passed4failed0skipped881.42s; three shallow cases reproduced Git Filename too long, older multi-decision fixture had an incomplete initial ref update with stale lock files. Its exact initial Git error was discarded by the fixture; isolated reruns passed. Short-root full rerun used unchanged production code and disabled no tests. Independent source review found no additional actionable production issues; public documentation links and git diff --check passed.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-04T13:01:24.356453Z",
+      "verification_method": null
+    },
+    {
+      "evidence_id": "e5b47169-226b-4eff-a780-306568c31bdf",
+      "kind": "code_observation",
+      "origin": "agent_reported",
+      "content": "Three issue-specific agents and an independent reviewer checked shallow reachability, durable local authentication and v4 migration, and delayed verification. Cross-check found foreign worktree verification could overwrite owner keep_open; owner-aware insert logic and a regression now protect that intent. The independent final review found no further actionable production issues. Official references: https://git-scm.com/docs/shallow ; https://sqlite.org/lang_transaction.html ; https://docs.python.org/3.12/library/sqlite3.html#how-to-use-the-connection-context-manager .",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-04T12:36:09.008253Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-04T13:06:54.371961Z"
+}

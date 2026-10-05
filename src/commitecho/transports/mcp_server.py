@@ -24,6 +24,7 @@ from commitecho.application.capture import CaptureService
 from commitecho.application.prepare import PrepareService
 from commitecho.application.verify import VerifyService
 from commitecho.application.retrieve import RetrieveService
+from commitecho.domain.models import Alternative
 
 
 # ---------------------------------------------------------------------------
@@ -33,11 +34,15 @@ from commitecho.application.retrieve import RetrieveService
 
 class BeginChangeInput(BaseModel):
     title: str = Field(description="Short description of the work being started.")
-    client: str = Field(description="Client identifier, e.g. 'codex', 'antigravity', 'copilot_vscode'.")
+    client: str = Field(description="Client identifier, e.g. 'codex', 'antigravity', 'copilot_vscode', 'claude_code'.")
     operation_id: str = Field(description="Caller-generated idempotency key (UUID recommended).")
     client_version: str | None = Field(default=None, description="Client version string.")
     native_session_id: str | None = Field(default=None, description="Opaque native session ID from the client.")
     prior_change_id: str | None = Field(default=None, description="Resume an existing open change.")
+
+
+class AlternativeInput(Alternative):
+    disposition: Literal["proposed", "selected", "rejected", "withdrawn"] = "rejected"
 
 
 class DecisionInput(BaseModel):
@@ -47,7 +52,7 @@ class DecisionInput(BaseModel):
     decision_id: str | None = None
     predecessor_revision_ids: list[str] = Field(default_factory=list)
     disposition: Literal["proposed", "selected", "rejected", "withdrawn"] = "proposed"
-    alternatives: list[dict[str, Any]] = Field(default_factory=list)
+    alternatives: list[AlternativeInput] = Field(default_factory=list)
     code_scope: dict[str, Any] = Field(default_factory=dict)
     evidence_ids: list[str] = Field(default_factory=list)
 
@@ -69,6 +74,8 @@ class RecordDecisionsInput(BaseModel):
             "Evidence items to persist. Each must have: kind, origin, content or locator. "
             "Optional evidence_id lets decisions and alternatives reference same-call evidence; "
             "the response returns every generated evidence ID. "
+            "For evidence you author, set client to your active client identifier; "
+            "it is not inherited from begin_change. "
             "Kinds: discussion_summary, test_result, code_observation, source_excerpt, "
             "external_artifact. Agent submissions use origin: agent_reported; "
             "developer_attestation and stronger origins require independent confirmation."
@@ -148,14 +155,23 @@ def create_server(repo_path: str | Path) -> Server:
         from commitecho.application.prepare import IndexChangedError
         try:
             result = await _dispatch(params.name, params.arguments or {}, capture, prepare, verify, retrieve)
+            if params.name == "get_status":
+                result["runtime"] = {
+                    "python_executable": sys.executable,
+                    "index_argv": [sys.executable, "-m", "commitecho", "index",
+                                   "--repo", repo_info.worktree_dir],
+                }
             return CallToolResult(content=[TextContent(type="text", text=json.dumps(result, default=str))])
         except IndexChangedError as exc:
             return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc), "error_code": "INDEX_CHANGED"}))], is_error=True)
         except (ValueError, TypeError) as exc:
             return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], is_error=True)
         except Exception as exc:
-            print(f"[commitecho] Unexpected error in {params.name}: {exc}", file=sys.stderr)
-            return CallToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(exc)}))], is_error=True)
+            exception_type = type(exc).__name__
+            print(f"[commitecho] Unexpected {exception_type} in {params.name}: {exc}", file=sys.stderr)
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps({
+                "error": str(exc), "exception_type": exception_type, "tool": params.name,
+            }))], is_error=True)
 
     return Server("commitecho", on_list_tools=list_tools, on_call_tool=call_tool)
 
@@ -261,7 +277,8 @@ _TOOL_DEFINITIONS: list[Tool] = [
         description=(
             "Open or resume a CommitEcho change for the current worktree. "
             "Call this at the start of any meaningful code/design task. "
-            "Returns change_id, session_id, base Git OID, and revision counter."
+            "Returns change_id, session_id, base Git OID, revision counter, "
+            "and current decision revisions for resumed work."
         ),
         input_schema=BeginChangeInput.model_json_schema(),
     ),
@@ -324,7 +341,9 @@ _TOOL_DEFINITIONS: list[Tool] = [
         name="get_status",
         description=(
             "Return pending changes, stale preparations, indexing coverage, and setup capability. "
-            "Use to check server health and see what work is in progress."
+            "Use to check server health and see what work is in progress. "
+            "A change_id includes current draft decisions; runtime.index_argv "
+            "identifies the server's Python environment for CLI indexing."
         ),
         input_schema=GetStatusInput.model_json_schema(),
     ),

@@ -99,7 +99,7 @@ class Session(BaseModel):
     """A single client session contributing to one or more Changes."""
 
     session_id: str = Field(default_factory=_new_uuid)
-    client: str  # e.g. "codex", "antigravity", "copilot_vscode"
+    client: str  # e.g. "codex", "antigravity", "copilot_vscode", "claude_code"
     client_version: str | None = None
     native_session_id: str | None = None  # opaque; client-supplied
     worktree_id: str  # repository-relative worktree identifier
@@ -151,11 +151,11 @@ class Alternative(BaseModel):
     """A considered-but-not-chosen approach within a decision."""
 
     choice: str
-    disposition: DecisionDisposition
-    reason: str | None = None
-    evidence_ids: list[str] = Field(default_factory=list)
+    disposition: DecisionDisposition = DecisionDisposition.REJECTED
+    reason: str | None = Field(default=None, description="Why this alternative was rejected; omit when unrecorded.")
+    evidence_ids: list[str] = Field(default_factory=list, description="Supporting evidence IDs belonging to this change.")
 
-    model_config = {"frozen": True}
+    model_config = {"frozen": True, "extra": "forbid"}
 
 
 class CodeScope(BaseModel):

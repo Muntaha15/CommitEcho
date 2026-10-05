@@ -1,0 +1,10 @@
+{
+  "name": "commitecho",
+  "version": "0.2.0",
+  "description": "Preserve the decisions behind code changes and recall them through your coding agent.",
+  "author": {
+    "name": "CommitEcho Contributors"
+  },
+  "homepage": "https://github.com/Muntaha15/CommitEcho",
+  "repository": "https://github.com/Muntaha15/CommitEcho"
+}

@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "record_id": "08602d16-921e-44db-b7c2-638411bcf30c",
+  "change_id": "81304c87-6489-4d4c-a46c-5979e0d13e91",
+  "summary": "Prepare v0.2.0 for PyPI with MIT licensing, CI, qualification evidence, publishing instructions and local-file exclusions.",
+  "prepared_for": {
+    "parent_oid": "a9650c5e12a8884895ae8b1bbc596e7af7791522",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "15ba66ac3a1e1e3130c039af0ec8fa07958543bc8407af8e001eed542f5987b6"
+  },
+  "decisions": [
+    {
+      "decision_id": "585f05cc-66ff-4986-8031-d0acb4c2d4ad",
+      "revision_id": "186531a1-fbcd-45fe-b08a-b58379140171",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "Finalize the Claude-qualified development candidate for v0.2.0 release.",
+      "choice": "Set package/source/plugin versions to 0.2.0, retain skill v7 and product behavior, rebuild artifacts, run the full minimum-MCP suite and installed-wheel lifecycle/upgrade checks.",
+      "rationale": "The supplied native round 4 run qualifies a9650c5; reuse that behavior evidence while separately validating final metadata and installed artifacts. Native final plugin loading remains unverified because Claude is unavailable here. Publication is a separate step.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "pyproject.toml",
+          "src/commitecho/__init__.py",
+          "commitecho-plugin/.claude-plugin/plugin.json",
+          "README.md",
+          "RELEASE_NOTES.md",
+          "RELEASE_INTEGRATION_CHECKLIST.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-04T16:45:41.072132Z"
+    },
+    {
+      "decision_id": "f4d8d04c-b946-48d8-a5f6-c492960b775f",
+      "revision_id": "26c81e4e-1dfb-4859-a9e2-5f3259489e43",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "The user expanded v0.2.0 preparation to PyPI distribution, a visible license, and PR CI with evaluations.",
+      "choice": "Add the existing declared MIT license, modern license metadata and project links; prepare manual PyPI publishing instructions and add Windows/Linux pytest CI for minimum/latest MCP with the existing fixture evaluation gate.",
+      "rationale": "The repository already declares MIT, the eval gate runs inside the full pytest suite, and the first publication still needs account authentication. This makes release assets reviewable and keeps credential-dependent publication explicit.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "LICENSE",
+          "PUBLISHING.md",
+          ".github/workflows/ci.yml",
+          "pyproject.toml",
+          "README.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-04T17:01:30.091636Z"
+    },
+    {
+      "decision_id": "a37eddfd-5e0d-4a41-9ca2-cf7e97d97647",
+      "revision_id": "e9cb32ad-169f-4d95-80ec-571a4c20cac5",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "Final release preparation needs observed qualification, with supplied native client results kept separate from local and installed-wheel checks.",
+      "choice": "Record the passing final full suite, isolated installed-wheel lifecycle/upgrade checks, package audit and strict metadata validation, while keeping hosted CI, final-version native Claude loading, and publication pending.",
+      "rationale": "The final runtime code and skill are unchanged from the qualified candidate. The actual full suite passed 421 tests with no skips on MCP 2.2.0; the separate final installed-wheel run passed 15 checks on MCP 2.3.0 without product or timeout changes after an initial concurrent run had initialization timeouts.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "RELEASE_NOTES.md",
+          "RELEASE_INTEGRATION_CHECKLIST.md",
+          "PUBLISHING.md",
+          "pyproject.toml",
+          "LICENSE",
+          ".github/workflows/ci.yml"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "825b8f81-5233-411d-bbd0-6f3593539222"
+      ],
+      "captured_at": "2026-10-04T17:12:05.375046Z"
+    },
+    {
+      "decision_id": "9b1b261b-de58-407f-b0e7-31b751ed6117",
+      "revision_id": "b28420ac-ee55-4860-bac3-110cbac8b075",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "Before committing release preparation, the user requested that all unnecessary local files be excluded through .gitignore.",
+      "choice": "Extend existing ignores for Antigravity CLI state, publisher/AWS credentials, coverage/linter outputs, Claude handoff reports, and the local debug probe; untrack tests/debug_baseline.py while preserving it on disk.",
+      "rationale": "Existing rules already cover build/test artifacts, private databases and detailed local reports. The debug probe is unreferenced by the test/eval flow. Release documentation, license, CI, source, fixtures and published decision records remain eligible for Git.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          ".gitignore",
+          "tests/debug_baseline.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-05T09:48:30.145999Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "825b8f81-5233-411d-bbd0-6f3593539222",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "2026-10-04 Windows/Python3.12.14/pytest9.1.1/MCP2.2.0 full suite:421 passed,0skipped,969.64s. Fresh wheel env/MCP2.3.0 copied existing tests outside source:15 passed,0skipped,86.81s;4profiles,3capture/commit/verify/index/restart/clone lifecycles,2plugin modes,6upgrades. CLI version/help/init/setup/doctor pass. Initial concurrent wheel run:5passed4initialize timeout failures; isolated rerun unchanged passed. Twine strict wheel/sdist checks pass. Static CI review confirms four Windows/Linux minimum/latest MCP jobs and fixture eval gate; no hosted run/upload claimed.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-04T17:12:05.374046Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-05T09:58:25.530008Z"
+}

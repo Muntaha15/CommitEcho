@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import click
@@ -12,14 +16,31 @@ from commitecho.git.adapter import GitAdapter, GitError, discover_repository
 from commitecho.storage.db import open_drafts_db, open_index_db
 
 
+def _resolve_repo(repo: str | None) -> GitAdapter:
+    """Resolve the Git repository according to precedence contract:
+    1. Explicit --repo wins, including explicit --repo .
+    2. A supplied COMMITECHO_REPO wins when the argument is omitted.
+    3. Documented CLAUDE_PROJECT_DIR when the above are absent.
+    4. Otherwise use the process working directory and Git discovery.
+    """
+    if repo is not None:
+        target = Path(repo)
+    elif os.environ.get("COMMITECHO_REPO"):
+        target = Path(os.environ["COMMITECHO_REPO"])
+    elif os.environ.get("CLAUDE_PROJECT_DIR"):
+        target = Path(os.environ["CLAUDE_PROJECT_DIR"])
+    else:
+        target = Path.cwd()
+
+    try:
+        return GitAdapter.from_path(target)
+    except GitError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 def _get_git_and_dbs(repo: str | None):
     """Resolve the Git repository and open database connections."""
-    try:
-        git = GitAdapter.from_path(repo or Path.cwd())
-    except GitError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
-
+    git = _resolve_repo(repo)
     drafts = open_drafts_db(git.repo_info.common_dir)
     index = open_index_db(git.repo_info.common_dir)
     return git, drafts, index
@@ -33,18 +54,19 @@ def _get_git_and_dbs(repo: str | None):
 @click.group()
 @click.version_option(package_name="commitecho")
 def main() -> None:
-    """CommitEcho – preserve and recall the decisions behind code changes."""
+    """CommitEcho - preserve and recall the decisions behind code changes."""
 
 
 @main.command()
-@click.option("--repo", default=".", show_default=True, help="Path to the Git repository to serve.")
-def serve(repo: str) -> None:
+@click.option("--repo", default=None, help="Path to the Git repository to serve.")
+def serve(repo: str | None) -> None:
     """Start the CommitEcho MCP server on stdio for REPO."""
     import asyncio
 
     from commitecho.transports.mcp_server import run_server
 
-    asyncio.run(run_server(Path(repo).resolve()))
+    git = _resolve_repo(repo)
+    asyncio.run(run_server(Path(git.repo_info.worktree_dir)))
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +115,7 @@ def doctor(repo: str | None) -> None:
     """Check Git, Python, SQLite FTS5, server availability, skill version, and client configs."""
     import sqlite3
 
-    from commitecho.integrations.profiles import ALL_PROFILES, SKILL_VERSION, _SKILL_TEMPLATE
+    from commitecho.integrations.profiles import ALL_PROFILES, SKILL_VERSION, _SKILL_TEMPLATE, validate_mcp_config
 
     ok = True
     has_missing = False
@@ -101,9 +123,9 @@ def doctor(repo: str | None) -> None:
 
     # Git availability
     try:
-        git = GitAdapter.from_path(repo or Path.cwd())
+        git = _resolve_repo(repo)
         click.echo(f"[ok] Git: worktree={git.repo_info.worktree_dir}")
-    except GitError as exc:
+    except click.ClickException as exc:
         click.echo(f"[fail] Git: {exc}", err=True)
         ok = False
         git = None
@@ -138,8 +160,9 @@ def doctor(repo: str | None) -> None:
     if git:
         # Database connectivity
         try:
-            open_drafts_db(git.repo_info.common_dir)
-            open_index_db(git.repo_info.common_dir)
+            for open_db in (open_drafts_db, open_index_db):
+                connection = open_db(git.repo_info.common_dir)
+                connection.close()
             click.echo("[ok] Draft and index databases opened successfully")
         except Exception as exc:
             click.echo(f"[fail] Database error: {exc}", err=True)
@@ -157,14 +180,19 @@ def doctor(repo: str | None) -> None:
             if not skill_file.exists():
                 click.echo(f"[missing] {profile.skill_path}: skill not installed (run 'commitecho setup')")
                 has_missing = True
-            elif skill_file.read_text(encoding="utf-8") == _SKILL_TEMPLATE:
-                click.echo(f"[ok] {profile.skill_path}: skill version {SKILL_VERSION} matches")
             else:
-                click.echo(
-                    f"[warn] {profile.skill_path}: skill file differs from current version "
-                    f"{SKILL_VERSION} (run 'commitecho setup' to update)"
-                )
-                has_warnings = True
+                try:
+                    if skill_file.read_text(encoding="utf-8") == _SKILL_TEMPLATE:
+                        click.echo(f"[ok] {profile.skill_path}: skill version {SKILL_VERSION} matches")
+                    else:
+                        click.echo(
+                            f"[warn] {profile.skill_path}: differs from current version {SKILL_VERSION}; "
+                            "setup updates known generated assets and preserves custom content. Review custom content manually."
+                        )
+                        has_warnings = True
+                except (OSError, UnicodeError) as exc:
+                    click.echo(f"[fail] Could not read {profile.skill_path}: {exc}", err=True)
+                    ok = False
 
         # Activation instructions & rules check
         click.echo("\n--- Activation instructions & rules ---")
@@ -216,6 +244,26 @@ def doctor(repo: str | None) -> None:
                 click.echo(f"[fail] {profile.display_name}: could not read {profile.instruction_path}: {exc}", err=True)
                 ok = False
 
+        # Check for legacy skill paths and AGENTS.override.md
+        legacy_skills = [
+            worktree / ".codex/skills/commitecho.md",
+            worktree / ".agents/skills/commitecho.md",
+        ]
+        for leg in legacy_skills:
+            if leg.exists():
+                click.echo(
+                    f"[warn] {leg.relative_to(worktree).as_posix()}: obsolete legacy skill file present "
+                    "(run 'commitecho setup' to migrate)"
+                )
+                has_warnings = True
+
+        if (worktree / "AGENTS.override.md").exists():
+            click.echo(
+                "[warn] AGENTS.override.md takes precedence over AGENTS.md in Codex sessions; "
+                "add the CommitEcho activation instructions to the override manually."
+            )
+            has_warnings = True
+
         # Client config block detection
         click.echo("\n--- Client configuration ---")
         import tomlkit
@@ -232,9 +280,10 @@ def doctor(repo: str | None) -> None:
                     if profile.config_format == "toml"
                     else json.loads(raw)
                 )
+                validate_mcp_config(config, profile)
                 servers = config.get(profile.mcp_servers_key, {})
                 if "commitecho" in servers:
-                    click.echo(f"[ok] {profile.display_name}: commitecho entry present in {profile.mcp_config_path}")
+                    click.echo(f"[ok] {profile.display_name}: commitecho entry present in {profile.mcp_config_path} (static structure checked; no live handshake)")
                 else:
                     click.echo(
                         f"[warn] {profile.display_name}: {profile.mcp_config_path} exists "
@@ -302,20 +351,57 @@ def status(repo: str | None, change_id: str | None, as_json: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _positive_timeout(ctx, param, value):
+    import math
+    if value is not None and (not math.isfinite(value) or value <= 0):
+        raise click.BadParameter("must be a finite positive number of seconds", param=param)
+    return value
+
+
 @main.command("index")
 @click.option("--repo", default=None, help="Path to the Git repository.")
-def rebuild_index(repo: str | None) -> None:
+@click.option("--timeout", default=None, type=float, callback=_positive_timeout, help="Maximum seconds for the complete indexing process.")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress informational messages (errors/warnings only).")
+def rebuild_index(repo: str | None, timeout: float | None, quiet: bool) -> None:
     """Rebuild the history index from committed Git objects.
 
     Scans .commitecho/records/ JSON files reachable from HEAD and populates
     index.sqlite.  Safe to re-run; existing entries are skipped.
     """
-    git, drafts, index = _get_git_and_dbs(repo)
-    info = git.repo_info
+    if timeout is not None:
+        command = [sys.executable, "-m", "commitecho", "index"]
+        if repo is not None:
+            command.extend(["--repo", repo])
+        if quiet:
+            command.append("--quiet")
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            for output, is_error in ((exc.stdout, False), (exc.stderr, True)):
+                if output:
+                    click.echo(output.decode("utf-8", errors="replace"), nl=False, err=is_error)
+            click.echo(f"[warn] CommitEcho: Indexing stopped after reaching timeout of {timeout:g}s; coverage may be incomplete.", err=True)
+            return
+        except OSError as exc:
+            raise click.ClickException(f"Cannot launch the indexing worker: {exc}") from exc
+        click.echo(result.stdout.decode("utf-8", errors="replace"), nl=False)
+        click.echo(result.stderr.decode("utf-8", errors="replace"), nl=False, err=True)
+        if result.returncode:
+            raise click.exceptions.Exit(result.returncode)
+        return
 
+    from contextlib import closing
+    git = _resolve_repo(repo)
+    with closing(open_index_db(git.repo_info.common_dir)) as index:
+        _index_history(git, index, quiet)
+
+
+def _index_history(git, index, quiet: bool) -> None:
+    info = git.repo_info
     head_oid = git.head_oid()
     if head_oid is None:
-        click.echo("Repository has no commits yet.")
+        if not quiet:
+            click.echo("Repository has no commits yet.")
         return
 
     # Enumerate all commits reachable from HEAD
@@ -324,12 +410,14 @@ def rebuild_index(repo: str | None) -> None:
     except GitError as exc:
         raise click.ClickException(f"Cannot traverse Git history: {exc}") from exc
     if coverage == "partial":
-        click.echo("  [warn] Git history is incomplete; index coverage will be partial.")
-    click.echo(f"Scanning {len(oids)} commits...")
+        click.echo("  [warn] Git history is incomplete; index coverage will be partial.", err=True)
+    if not quiet:
+        click.echo(f"Scanning {len(oids)} commits...")
 
     from datetime import datetime, timezone
 
     indexed = 0
+
     for oid in oids:
         already = index.execute(
             "SELECT 1 FROM indexed_commits WHERE commit_oid = ?", (oid,)
@@ -381,9 +469,10 @@ def rebuild_index(repo: str | None) -> None:
                         "(commit_oid, record_path, error, observed_at) VALUES (?, ?, ?, ?)",
                         (oid, failed_path, error, datetime.now(timezone.utc).isoformat()),
                     )
-                    click.echo(f"  [warn] {oid[:8]}: {failed_path}: {error}")
+                    click.echo(f"  [warn] {oid[:8]}: {failed_path}: {error}", err=True)
 
-    click.echo(f"Indexed {indexed} new records.")
+    if not quiet:
+        click.echo(f"Indexed {indexed} new records.")
 
 
 def _index_record(index, commit_oid: str, record_id: str, record_path: str, data: dict, raw: str) -> None:
@@ -631,45 +720,96 @@ def export(change_id: str, repo: str | None, output: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _parse_server_command(command: str, *, windows: bool | None = None) -> list[str]:
+    """Parse shell-style argv, preserving Windows paths and removing quote delimiters.
+
+    On Windows, quote each whole argument; embedded/mixed quotes are rejected
+    rather than silently generating a different executable or argument list.
+    """
+    import shlex
+
+    windows = sys.platform == "win32" if windows is None else windows
+    try:
+        args = shlex.split(command, posix=not windows)
+        if windows:
+            parsed = []
+            for arg in args:
+                if arg and arg[0] in ("'", '"') and arg[-1] == arg[0]:
+                    arg = arg[1:-1]
+                if '"' in arg:
+                    raise ValueError("on Windows quote each whole argument; embedded quotes are unsupported")
+                parsed.append(arg)
+            args = parsed
+        if not args or not args[0].strip():
+            raise ValueError("server command cannot be empty")
+        if any("\x00" in arg for arg in args):
+            raise ValueError("server command cannot contain NUL bytes")
+        return args
+    except ValueError as exc:
+        raise click.ClickException(f"Invalid --server-cmd: {exc}") from exc
+
+
 @main.command()
 @click.option("--client", "client_ids", multiple=True,
-              help="Client IDs to configure (codex, antigravity, copilot_vscode). Repeat for multiple.")
+              help="Client IDs to configure (codex, antigravity, copilot_vscode, claude_code). Repeat for multiple.")
 @click.option("--repo", default=None, help="Path to the Git repository / project root.")
 @click.option("--server-cmd", default=None,
-              help="Command used to launch the server (default: auto-detect 'commitecho serve').")
+              help="Server argv (default: current Python -m commitecho serve). Quote whole arguments on Windows.")
+@click.option("--portable", is_flag=True,
+              help="Claude-only portable command ('commitecho serve'); requires PATH installation.")
+@click.option("--regenerate-server", is_flag=True,
+              help="Replace an existing CommitEcho command/args; otherwise preserve user launch overrides.")
 @click.option("--dry-run", is_flag=True, help="Show what would change without writing files.")
-def setup(client_ids: tuple[str, ...], repo: str | None, server_cmd: str | None, dry_run: bool) -> None:
+def setup(
+    client_ids: tuple[str, ...],
+    repo: str | None,
+    server_cmd: str | None,
+    portable: bool,
+    regenerate_server: bool,
+    dry_run: bool,
+) -> None:
     """Install CommitEcho configuration for one or more coding agent clients.
 
-    Merges into existing config files.  Use --dry-run to preview changes.
+    Merges into existing config files. Use --dry-run to preview changes.
     """
     from commitecho.integrations.profiles import ALL_PROFILES, SetupGenerator
 
-    git, _, _ = _get_git_and_dbs(repo)
+    if server_cmd is not None and portable:
+        raise click.UsageError("Cannot specify both --server-cmd and --portable.")
+
+    # Preflight client IDs
+    if not client_ids:
+        target_client_ids = tuple(ALL_PROFILES.keys())
+    else:
+        for cid in client_ids:
+            if cid not in ALL_PROFILES:
+                raise click.ClickException(
+                    f"Unknown client '{cid}'. Supported: {', '.join(ALL_PROFILES)}"
+                )
+        target_client_ids = client_ids
+
+    # Resolve git worktree WITHOUT opening databases (dry-run safe)
+    git = _resolve_repo(repo)
     worktree = git.repo_info.worktree_dir
 
-    if not client_ids:
-        client_ids = tuple(ALL_PROFILES.keys())
-
     cmd: list[str]
-    if server_cmd:
-        # shlex-split so quoted paths with spaces survive (cross-platform via
-        # posix=False on Windows keeps backslashes intact).
-        import shlex
-        cmd = shlex.split(server_cmd, posix=(sys.platform != "win32"))
+    if server_cmd is not None:
+        cmd = _parse_server_command(server_cmd)
+    elif portable:
+        cmd = ["commitecho", "serve"]
     else:
-        # sys.executable may contain spaces on Windows (e.g. "C:\Program Files\…").
-        # Store it as a single array element; all three clients consume the array
-        # directly in JSON so no shell quoting is needed.
         cmd = [sys.executable, "-m", "commitecho", "serve"]
 
-    generator = SetupGenerator(worktree, cmd)
+    generator = SetupGenerator(worktree, cmd, portable=portable, regenerate_server=regenerate_server)
 
-    for cid in client_ids:
-        profile = ALL_PROFILES.get(cid)
-        if profile is None:
-            click.echo(f"[warn] Unknown client '{cid}'. Supported: {', '.join(ALL_PROFILES)}", err=True)
-            continue
+    # Preflight configuration files before any writes
+    selected_profiles = [ALL_PROFILES[cid] for cid in target_client_ids]
+    try:
+        generator.preflight(selected_profiles)
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    for profile in selected_profiles:
         click.echo(f"\n[{profile.display_name}]")
         changes = generator.generate(profile, dry_run=dry_run)
         for change in changes:
@@ -679,3 +819,562 @@ def setup(client_ids: tuple[str, ...], repo: str | None, server_cmd: str | None,
         click.echo("\n(dry-run: no files were written)")
     else:
         click.echo("\nSetup complete.")
+
+    if "claude_code" in target_client_ids:
+        when = "After applying setup" if dry_run else "Next"
+        click.echo(
+            f"\n{when}: open Claude Code in this repository, complete workspace trust "
+            "and approve the project commitecho MCP server, then start a fresh session/reload. "
+            "Call get_status and compare head_oid with git rev-parse HEAD. "
+            "For unattended approval, see README's Claude Code section for "
+            "enabledMcpjsonServers in .claude/settings.local.json; setup does not change approvals."
+        )
+
+
+# ---------------------------------------------------------------------------
+# check-message
+# ---------------------------------------------------------------------------
+
+
+@main.command("check-message")
+@click.argument("message_file", type=click.Path(dir_okay=False, path_type=Path))
+@click.option("--repo", default=None, help="Path to the Git repository.")
+@click.option("--strict", is_flag=True, default=False, help="Reject commits that fail validation.")
+def check_message(message_file: Path, repo: str | None, strict: bool) -> None:
+    """Validate a message's record against current HEAD and the Git index.
+
+    A commit-msg hook receives no reliable amend flag; reused amend records
+    are rejected instead of guessing the prospective commit's parent.
+    """
+    try:
+        git = _resolve_repo(repo)
+        trailers = git.read_message_trailers(message_file.read_text(encoding="utf-8"))
+        declarations = [
+            (key, value) for key, values in trailers.items()
+            if key.lower() == "commitecho-record" for value in values
+        ]
+        if not declarations:
+            raise ValueError("Missing 'CommitEcho-Record' trailer. Capture decisions and prepare a record before committing.")
+        if len(declarations) != 1:
+            raise ValueError(f"Multiple 'CommitEcho-Record' trailers found ({len(declarations)}).")
+        key, record_id = declarations[0]
+        if key != "CommitEcho-Record":
+            raise ValueError("Trailer key must be exactly 'CommitEcho-Record'.")
+        try:
+            if str(uuid.UUID(record_id)) != record_id:
+                raise ValueError("UUID must be canonical lowercase hyphenated format.")
+        except ValueError as exc:
+            raise ValueError(f"Invalid 'CommitEcho-Record' UUID '{record_id}': {exc}") from exc
+        record_path = f".commitecho/records/{record_id}.json"
+        record_bytes = git.read_file_from_index(record_path)
+        if record_bytes is None:
+            raise ValueError(f"Referenced record '{record_path}' is not staged in the Git index. Run 'git add {record_path}'.")
+        try:
+            record_data = json.loads(record_bytes.decode("utf-8"))
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError(f"Staged record '{record_path}' contains malformed JSON: {exc}") from exc
+        try:
+            _validate_record(record_data, record_id)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ValueError(f"Invalid staged record '{record_path}': {exc}") from exc
+        prepared = record_data["prepared_for"]
+        if (type(prepared.get("manifest_version")) is not int or prepared["manifest_version"] != 1
+                or prepared.get("object_format") != git.repo_info.object_format):
+            raise ValueError("Record manifest version or object format is invalid.")
+        head_oid = git.head_oid()
+        expected_parent = head_oid or ("0" * (64 if git.repo_info.object_format == "sha256" else 40))
+        if prepared["parent_oid"] != expected_parent:
+            raise ValueError(
+                f"Record prepared for parent {prepared['parent_oid']}, "
+                f"but current HEAD is {head_oid or '(root)'} (stale preparation)."
+            )
+        actual_digest, _ = git.code_fingerprint()
+        if actual_digest != prepared["code_manifest_sha256"]:
+            raise ValueError("Staged changes do not match CommitEcho record preparation; re-prepare after staging code.")
+    except (click.ClickException, GitError, OSError, ValueError, TypeError, KeyError) as exc:
+        click.echo(f"[{'error' if strict else 'warn'}] CommitEcho: {exc}", err=True)
+        if strict:
+            raise click.exceptions.Exit(1) from exc
+        return
+    click.echo(f"[ok] CommitEcho record {record_id} verified against current HEAD and staged changes.")
+
+# ---------------------------------------------------------------------------
+# hook
+# ---------------------------------------------------------------------------
+
+_HOOK_START_MARKER = "# --- commitecho-hook-start ---"
+_HOOK_END_MARKER = "# --- commitecho-hook-end ---"
+
+
+def _generate_hook_block(strict: bool) -> str:
+    import shlex
+
+    py_path = shlex.quote(Path(sys.executable).as_posix())
+    strict_flag = "--strict" if strict else ""
+    return (
+        f"{_HOOK_START_MARKER}\n"
+        "# Managed by CommitEcho. Do not edit this block.\n"
+        f"TARGET_PYTHON={py_path}\n"
+        f'STRICT_FLAG="{strict_flag}"\n'
+        'if [ -x "$TARGET_PYTHON" ]; then\n'
+        '    if "$TARGET_PYTHON" -m commitecho check-message "$1" --repo "$PWD" $STRICT_FLAG; then\n'
+        '        :\n'
+        '    else\n'
+        '        echo "[warn] CommitEcho: message validation failed; reinstall the hook if its runtime changed." >&2\n'
+        '        if [ -n "$STRICT_FLAG" ]; then exit 1; fi\n'
+        '    fi\n'
+        'else\n'
+        '    echo "[warn] CommitEcho: installed Python runtime is unavailable; reinstall the hook." >&2\n'
+        '    if [ -n "$STRICT_FLAG" ]; then exit 1; fi\n'
+        'fi\n'
+        f"{_HOOK_END_MARKER}\n"
+    )
+
+
+def _display_rel_path(path: Path, worktree: Path | str) -> str:
+    try:
+        return path.relative_to(worktree).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _hook_block_span(content: bytes) -> tuple[int, int] | None:
+    """Identify exactly one complete managed block without decoding foreign bytes."""
+    start = _HOOK_START_MARKER.encode()
+    end = _HOOK_END_MARKER.encode()
+    if content.count(start) != 1 or content.count(end) != 1:
+        return None
+    match = re.search(
+        rb"(?ms)^" + re.escape(start) + rb"\r?\n.*?^" + re.escape(end) + rb"(?:\r?\n|$)",
+        content,
+    )
+    return match.span() if match else None
+
+
+def _local_git_hook(git: GitAdapter) -> Path:
+    hook_file, is_local = git.get_hook_path("commit-msg")
+    if not is_local:
+        raise click.ClickException(
+            f"core.hooksPath resolves to external/global location '{hook_file.parent}'. "
+            "Configure repository-local hooks or integrate manually."
+        )
+    if hook_file.is_symlink():
+        raise click.ClickException(f"Refusing to modify symlink hook '{hook_file}'. Integrate manually.")
+    return hook_file
+
+
+def _install_git_hook(git: GitAdapter, strict: bool, dry_run: bool) -> None:
+    import shlex
+
+    hook_file = _local_git_hook(git)
+    display_path = _display_rel_path(hook_file, git.repo_info.worktree_dir)
+    block = _generate_hook_block(strict).encode()
+    if not hook_file.exists():
+        action = f"[create] {display_path}: install CommitEcho commit-msg hook (strict={strict})."
+        new_content = b"#!/bin/sh\n\n" + block
+    else:
+        existing = hook_file.read_bytes()
+        span = _hook_block_span(existing)
+        if span is None:
+            click.echo(
+                f"[warn] Existing commit-msg hook at '{display_path}' is not managed by CommitEcho; leaving unchanged.\n"
+                "To integrate, invoke this command before any unconditional exit:\n"
+                f"  {shlex.quote(Path(sys.executable).as_posix())} -m commitecho check-message \"$1\" --repo \"$PWD\" {'--strict' if strict else ''}",
+                err=True,
+            )
+            return
+        new_content = existing[:span[0]] + block + existing[span[1]:]
+        if new_content == existing:
+            click.echo(f"[skip] {display_path}: Git hook already up to date (strict={strict}).")
+            return
+        action = f"[update] {display_path}: update CommitEcho commit-msg hook (strict={strict})."
+    click.echo(action)
+    if dry_run:
+        click.echo("(dry-run: no files were written)")
+        return
+    hook_file.parent.mkdir(parents=True, exist_ok=True)
+    hook_file.write_bytes(new_content)
+    os.chmod(hook_file, os.stat(hook_file).st_mode | 0o111)
+    click.echo("Git hook installed successfully.")
+
+
+def _preflight_git_hook_cleanup(git: GitAdapter) -> tuple[Path, bytes | None]:
+    hook_file = _local_git_hook(git)
+    try:
+        return hook_file, hook_file.read_bytes()
+    except FileNotFoundError:
+        return hook_file, None
+
+
+def _uninstall_git_hook(
+    git: GitAdapter, dry_run: bool, validated: tuple[Path, bytes | None] | None = None,
+) -> None:
+    hook_file, existing = validated if validated is not None else _preflight_git_hook_cleanup(git)
+    display_path = _display_rel_path(hook_file, git.repo_info.worktree_dir)
+    if existing is None:
+        click.echo(f"[skip] No hook file found at '{display_path}'.")
+        return
+    span = _hook_block_span(existing)
+    if span is None:
+        click.echo(f"[skip] '{display_path}' is not managed by CommitEcho; leaving unchanged.")
+        return
+    remainder = existing[:span[0]] + existing[span[1]:]
+    pure_launcher = remainder.replace(b"\r\n", b"\n") in (b"#!/bin/sh\n", b"#!/bin/sh\n\n")
+    action = "remove" if pure_launcher else "update"
+    click.echo(f"[{action}] {display_path}: remove CommitEcho hook content, preserving foreign bytes.")
+    if dry_run:
+        click.echo("(dry-run: no files were changed)")
+    elif pure_launcher:
+        hook_file.unlink()
+        click.echo("Git hook uninstalled successfully.")
+    else:
+        hook_file.write_bytes(remainder)
+        click.echo("Git hook block removed successfully.")
+
+
+def _is_generated_claude_hook(handler: object) -> bool:
+    """Recognize only the exact exec-form handler emitted by the old installer."""
+    if not isinstance(handler, dict) or set(handler) != {"type", "command", "args"}:
+        return False
+    command, args = handler["command"], handler["args"]
+    if handler["type"] != "command" or not isinstance(command, str) or not isinstance(args, list):
+        return False
+    if command != "commitecho":
+        if not Path(command).is_absolute() or not re.fullmatch(r"python(?:\d+(?:\.\d+)?)?(?:\.exe)?", Path(command).name, re.IGNORECASE):
+            return False
+        if args[:2] != ["-m", "commitecho"]:
+            return False
+        args = args[2:]
+    if len(args) != 4 or args[:2] != ["index", "--timeout"] or args[3] != "--quiet":
+        return False
+    try:
+        return isinstance(args[2], str) and str(float(args[2])) == args[2]
+    except ValueError:
+        return False
+
+
+def _preflight_claude_hook_cleanup(wt: Path) -> tuple[Path, dict | None]:
+    from commitecho.integrations.profiles import validate_repo_path
+
+    settings_file = wt / ".claude" / "settings.json"
+    display_path = _display_rel_path(settings_file, wt)
+    try:
+        validate_repo_path(wt, settings_file)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    try:
+        settings_data = json.loads(settings_file.read_text(encoding="utf-8"))
+        if not isinstance(settings_data, dict):
+            raise ValueError("root is not a JSON object")
+    except FileNotFoundError:
+        return settings_file, None
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise click.ClickException(f"Failed to parse '{display_path}': {exc}") from exc
+    return settings_file, settings_data
+
+
+def _uninstall_claude_code_hook(
+    wt: Path, dry_run: bool, validated: tuple[Path, dict | None] | None = None,
+) -> None:
+    settings_file, settings_data = validated if validated is not None else _preflight_claude_hook_cleanup(wt)
+    display_path = _display_rel_path(settings_file, wt)
+    if settings_data is None:
+        click.echo(f"[skip] No settings file found at '{display_path}'.")
+        return
+
+    hooks_dict = settings_data.get("hooks")
+    if not isinstance(hooks_dict, dict):
+        click.echo(f"[skip] No 'hooks' configuration in '{display_path}'.")
+        return
+
+    session_start_list = hooks_dict.get("SessionStart")
+    if not isinstance(session_start_list, list):
+        click.echo(f"[skip] No 'SessionStart' hooks in '{display_path}'.")
+        return
+
+    new_session_start = []
+    removed = False
+    for item in session_start_list:
+        if not isinstance(item, dict) or not isinstance(item.get("hooks"), list):
+            new_session_start.append(item)
+            continue
+        retained = [sub for sub in item["hooks"] if not _is_generated_claude_hook(sub)]
+        if len(retained) == len(item["hooks"]):
+            new_session_start.append(item)
+            continue
+        removed = True
+        if retained or set(item) != {"matcher", "hooks"} or item.get("matcher") != "startup|resume":
+            new_session_start.append({**item, "hooks": retained})
+
+    if not removed:
+        click.echo(f"[skip] No CommitEcho SessionStart hook found in '{display_path}'.")
+        return
+
+    if new_session_start:
+        hooks_dict["SessionStart"] = new_session_start
+    else:
+        hooks_dict.pop("SessionStart", None)
+
+    if not hooks_dict:
+        settings_data.pop("hooks", None)
+
+    if not settings_data:
+        action = f"[remove] {display_path}: delete empty settings file."
+        click.echo(action)
+        if not dry_run:
+            settings_file.unlink()
+            click.echo("Claude Code lifecycle hook uninstalled successfully.")
+        else:
+            click.echo("(dry-run: no files were changed)")
+    else:
+        action = f"[update] {display_path}: remove CommitEcho SessionStart hook, preserving other settings."
+        click.echo(action)
+        if not dry_run:
+            settings_file.write_text(json.dumps(settings_data, indent=2) + "\n", encoding="utf-8")
+            click.echo("Claude Code lifecycle hook uninstalled successfully.")
+        else:
+            click.echo("(dry-run: no files were changed)")
+
+
+@main.group()
+def hook() -> None:
+    """Manage Git and agent lifecycle hooks."""
+
+
+@hook.command("install")
+@click.option("--git", "use_git", is_flag=True, default=False, help="Install Git commit-msg hook.")
+@click.option("--client", "client_id", default=None, type=click.Choice(["claude_code"]),
+              help="Claude Code lifecycle installation is gated pending native-client qualification.")
+@click.option("--repo", default=None, help="Path to the Git repository.")
+@click.option("--strict", is_flag=True, default=False, help="Reject commits that fail message validation (Git hook only).")
+@click.option("--timeout", default=5.0, type=float, callback=_positive_timeout, help="Timeout in seconds for bounded indexing hook (default: 5.0).")
+@click.option("--portable", is_flag=True, help="Use portable command ('commitecho') requiring PATH installation.")
+@click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
+def hook_install(
+    use_git: bool,
+    client_id: str | None,
+    repo: str | None,
+    strict: bool,
+    timeout: float,
+    portable: bool,
+    dry_run: bool,
+) -> None:
+    """Install Git commit-msg hook or client lifecycle hooks.
+
+    Default: installs the Git commit-msg hook if neither --git nor --client is specified.
+    """
+    if not use_git and not client_id:
+        use_git = True
+
+    if client_id == "claude_code":
+        raise click.ClickException(
+            "Claude Code lifecycle hooks are not qualified for a recorded client version/OS. "
+            "No native hook was installed. Use 'commitecho index --timeout 5' explicitly; "
+            "qualify actual Claude loading, execution, timeout and diagnostics before enabling this adapter."
+        )
+
+    git = _resolve_repo(repo)
+    if use_git:
+        try:
+            _install_git_hook(git, strict=strict, dry_run=dry_run)
+        except (GitError, OSError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
+
+@hook.command("uninstall")
+@click.option("--git", "use_git", is_flag=True, default=False, help="Uninstall Git commit-msg hook.")
+@click.option("--client", "client_id", default=None, type=click.Choice(["claude_code"]),
+              help="Uninstall client lifecycle hook (claude_code SessionStart bounded indexing).")
+@click.option("--repo", default=None, help="Path to the Git repository.")
+@click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
+def hook_uninstall(
+    use_git: bool,
+    client_id: str | None,
+    repo: str | None,
+    dry_run: bool,
+) -> None:
+    """Uninstall CommitEcho Git or client lifecycle hooks."""
+    if not use_git and not client_id:
+        use_git = True
+
+    git = _resolve_repo(repo)
+    wt = Path(git.repo_info.worktree_dir)
+
+    try:
+        git_cleanup = _preflight_git_hook_cleanup(git) if use_git else None
+        claude_cleanup = _preflight_claude_hook_cleanup(wt) if client_id == "claude_code" else None
+        if git_cleanup is not None:
+            _uninstall_git_hook(git, dry_run=dry_run, validated=git_cleanup)
+        if claude_cleanup is not None:
+            _uninstall_claude_code_hook(wt, dry_run=dry_run, validated=claude_cleanup)
+    except (GitError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# plugin (Claude Code plugin generator)
+# ---------------------------------------------------------------------------
+
+
+def _render_plugin_manifest(version: str) -> str:
+    return json.dumps(
+        {
+            "name": "commitecho",
+            "version": version,
+            "description": "Preserve the decisions behind code changes and recall them through your coding agent.",
+            "author": {"name": "CommitEcho Contributors"},
+            "homepage": "https://github.com/Muntaha15/CommitEcho",
+            "repository": "https://github.com/Muntaha15/CommitEcho",
+        },
+        indent=2,
+    ) + "\n"
+
+
+@main.command("plugin")
+@click.option("--output-dir", default=None, help="Directory to generate the Claude plugin into (default: commitecho-plugin in repo root).")
+@click.option("--repo", default=None, help="Path to the Git repository / project root.")
+@click.option("--portable", is_flag=True, help="Use portable server command ('commitecho serve') on PATH.")
+@click.option("--dry-run", is_flag=True, help="Show what would be created without writing files.")
+def plugin(
+    output_dir: str | None,
+    repo: str | None,
+    portable: bool,
+    dry_run: bool,
+) -> None:
+    """Generate a local Claude plugin requiring an installed CommitEcho runtime.
+
+    Creates standard plugin layout:
+      <output_dir>/
+      |-- .claude-plugin/plugin.json
+      |-- .mcp.json
+      `-- skills/commitecho/SKILL.md
+    """
+    from commitecho.integrations.profiles import SKILL_TEMPLATE, is_known_generated_skill
+
+    git = _resolve_repo(repo)
+    wt = Path(git.repo_info.worktree_dir)
+
+    target_dir = Path(output_dir) if output_dir else wt / "commitecho-plugin"
+    if not target_dir.is_absolute():
+        target_dir = (wt / target_dir).resolve()
+
+    manifest_file = target_dir / ".claude-plugin" / "plugin.json"
+    mcp_file = target_dir / ".mcp.json"
+    skill_file = target_dir / "skills" / "commitecho" / "SKILL.md"
+
+    # Directory safety check: if directory exists and is nonempty, ensure it is a commitecho plugin directory
+    if target_dir.exists() and not target_dir.is_dir():
+        raise click.ClickException(f"Target '{target_dir}' is not a directory.")
+    if target_dir.exists() and any(target_dir.iterdir()):
+        if not manifest_file.exists():
+            raise click.ClickException(
+                f"Target directory '{target_dir}' exists and is not a CommitEcho plugin directory. "
+                "Refusing to overwrite unrelated files."
+            )
+
+    import importlib.metadata
+    try:
+        pkg_version = importlib.metadata.version("commitecho")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise click.ClickException("Install the CommitEcho package before generating a plugin.") from exc
+
+    manifest_content = _render_plugin_manifest(pkg_version.replace(".dev", "-dev."))
+
+    cmd = (
+        ["commitecho", "serve"]
+        if portable
+        else [Path(sys.executable).as_posix(), "-m", "commitecho", "serve"]
+    )
+    mcp_content = json.dumps(
+        {
+            "mcpServers": {
+                "commitecho": {
+                    "command": cmd[0],
+                    "args": cmd[1:],
+                }
+            }
+        },
+        indent=2,
+    ) + "\n"
+
+    skill_content = SKILL_TEMPLATE
+
+    plan = [
+        (manifest_file, manifest_content),
+        (mcp_file, mcp_content),
+        (skill_file, skill_content),
+    ]
+
+    # Preflight every generated asset before creating or updating any file.
+    for fpath, content in plan:
+        ancestor = fpath.parent
+        while ancestor != target_dir:
+            if ancestor.exists() and not ancestor.is_dir():
+                raise click.ClickException(f"Expected a directory at '{ancestor}'; nothing was written.")
+            ancestor = ancestor.parent
+        if fpath.is_symlink() or not fpath.resolve().is_relative_to(target_dir.resolve()):
+            raise click.ClickException(f"Generated path '{fpath}' is linked outside its owned location; nothing was written.")
+        if not fpath.exists():
+            continue
+        if not fpath.is_file():
+            raise click.ClickException(f"Expected a file at '{fpath}'; nothing was written.")
+        existing = fpath.read_text(encoding="utf-8")
+        if fpath == skill_file and is_known_generated_skill(existing):
+            continue
+        allowed = {content}
+        if fpath == manifest_file:
+            try:
+                prior = json.loads(existing)
+            except ValueError:
+                prior = None
+            prior_version = prior.get("version") if isinstance(prior, dict) else None
+            if isinstance(prior_version, str) and re.fullmatch(
+                r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-dev\.(?:0|[1-9][0-9]*))?",
+                prior_version,
+            ):
+                allowed.add(_render_plugin_manifest(prior_version))
+        if fpath == mcp_file:
+            for runtime in (["commitecho", "serve"], [Path(sys.executable).as_posix(), "-m", "commitecho", "serve"]):
+                allowed.add(json.dumps({"mcpServers": {"commitecho": {"command": runtime[0], "args": runtime[1:]}}}, indent=2) + "\n")
+        if existing not in allowed:
+            if fpath == mcp_file:
+                try:
+                    prior = json.loads(existing)
+                    prior_command = prior["mcpServers"]["commitecho"]["command"]
+                except (ValueError, KeyError, TypeError):
+                    prior_command = None
+                pinned = {"mcpServers": {"commitecho": {
+                    "command": prior_command, "args": ["-m", "commitecho", "serve"],
+                }}}
+                if isinstance(prior_command, str) and existing == json.dumps(pinned, indent=2) + "\n":
+                    raise click.ClickException(
+                        f"'{fpath}' pins a different Python runtime: {prior_command!r}; "
+                        f"the current runtime is {Path(sys.executable).as_posix()!r}. "
+                        "Preserving all files; run plugin generation with the pinned runtime "
+                        "or choose an empty output directory."
+                    )
+            raise click.ClickException(
+                f"'{fpath}' is customized or belongs to another plugin. "
+                "Preserving all files; choose an empty output directory."
+            )
+
+    for fpath, content in plan:
+        disp = _display_rel_path(fpath, wt)
+        if not fpath.exists():
+            click.echo(f"[create] {disp}")
+            if not dry_run:
+                fpath.parent.mkdir(parents=True, exist_ok=True)
+                fpath.write_text(content, encoding="utf-8")
+        else:
+            existing = fpath.read_text(encoding="utf-8")
+            if existing == content:
+                click.echo(f"[skip] {disp}: already up to date.")
+            else:
+                click.echo(f"[update] {disp}")
+                if not dry_run:
+                    fpath.write_text(content, encoding="utf-8")
+
+    if dry_run:
+        click.echo("\n(dry-run: no files were written)")
+    else:
+        click.echo("\nPlugin generated successfully. An installed CommitEcho runtime is required. Validate loading and repository binding in Claude Code before use.")

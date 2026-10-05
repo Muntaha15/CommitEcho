@@ -163,9 +163,9 @@ def read_staged_changes(repo_info: RepoInfo) -> list[StagedEntry]:
     if head_oid is None:
         # Root commit: diff against this repository's empty tree.
         # ``--root`` is not accepted as a tree-ish by diff-index.
-        args = ["diff-index", "--cached", "--raw", "-z", _empty_tree_oid(repo_info)]
+        args = ["diff-index", "--cached", "--no-renames", "--raw", "-z", _empty_tree_oid(repo_info)]
     else:
-        args = ["diff-index", "--cached", "--raw", "-z", "HEAD"]
+        args = ["diff-index", "--cached", "--no-renames", "--raw", "-z", "HEAD"]
 
     raw = _run(args, cwd=repo_info.worktree_dir)
 
@@ -243,6 +243,25 @@ def fingerprint_manifest(manifest: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def parse_trailers(message: str, cwd: str | None = None) -> dict[str, list[str]]:
+    """Parse Git trailers from a message string using git interpret-trailers --parse."""
+    result = subprocess.run(
+        [_git_exe(), "interpret-trailers", "--parse", "--no-divider"],
+        input=message,
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    if result.returncode:
+        raise GitError(f"Cannot parse trailers: {result.stderr.strip()}")
+    trailers: dict[str, list[str]] = {}
+    for line in result.stdout.splitlines():
+        if ": " in line:
+            k, _, v = line.partition(": ")
+            trailers.setdefault(k.strip(), []).append(v.strip())
+    return trailers
+
+
 # ---------------------------------------------------------------------------
 # High-level adapter
 # ---------------------------------------------------------------------------
@@ -288,21 +307,54 @@ class GitAdapter:
     def read_commit_trailers(self, oid: str) -> dict[str, list[str]]:
         """Return all Git trailers for *oid* as {key: [value, ...]}."""
         msg = _run(["log", "-1", "--format=%B", oid], cwd=self._info.worktree_dir)
-        result = subprocess.run(
-            [_git_exe(), "interpret-trailers", "--parse"],
-            input=msg,
-            capture_output=True,
-            text=True,
+        return parse_trailers(msg, cwd=self._info.worktree_dir)
+
+    def read_message_trailers(self, message: str) -> dict[str, list[str]]:
+        """Return all Git trailers for a commit message string as {key: [value, ...]}."""
+        return parse_trailers(message, cwd=self._info.worktree_dir)
+
+    def read_file_from_index(self, path: str) -> bytes | None:
+        """Read a file from stage 0 of the Git index. Return None if not staged."""
+        norm_path = Path(path).as_posix()
+        res = subprocess.run(
+            [_git_exe(), "show", f":{norm_path}"],
             cwd=self._info.worktree_dir,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
         )
-        if result.returncode:
-            raise GitError(f"Cannot parse commit trailers: {result.stderr.strip()}")
-        trailers: dict[str, list[str]] = {}
-        for line in result.stdout.splitlines():
-            if ": " in line:
-                k, _, v = line.partition(": ")
-                trailers.setdefault(k.strip(), []).append(v.strip())
-        return trailers
+        if res.returncode != 0:
+            return None
+        return res.stdout
+
+    def get_hook_path(self, hook_name: str) -> tuple[Path, bool]:
+        """Locate Git's effective hook, allowing only repository-local ownership."""
+        wt = Path(self._info.worktree_dir).resolve()
+        cd = Path(self._info.common_dir).resolve()
+        raw_path = _run(["rev-parse", "--git-path", f"hooks/{hook_name}"], cwd=str(wt))
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = wt / path
+        # Resolve parents for locality, retaining the final symlink for the caller.
+        hook_path = path.parent.resolve() / path.name
+        target = hook_path.resolve()
+        target_local = target.is_relative_to(wt) or target.is_relative_to(cd)
+        result = subprocess.run(
+            [_git_exe(), "config", "--show-origin", "--get", "core.hooksPath"],
+            cwd=str(wt), capture_output=True, text=True,
+        )
+        if result.returncode == 1:
+            return hook_path, target_local
+        if result.returncode != 0:
+            raise GitError(f"Cannot inspect core.hooksPath: {result.stderr.strip()}")
+        origin, separator, _ = result.stdout.strip().partition("\t")
+        if not separator or not origin.startswith("file:"):
+            return hook_path, False
+        origin_path = Path(origin.removeprefix("file:"))
+        if not origin_path.is_absolute():
+            origin_path = wt / origin_path
+        origin_path = origin_path.resolve()
+        config_local = origin_path.is_relative_to(wt) or origin_path.is_relative_to(cd)
+        return hook_path, target_local and config_local
 
     def file_exists_in_commit(self, oid: str, path: str) -> bool:
         """Check whether *path* exists in the tree of commit *oid*."""
@@ -339,7 +391,7 @@ class GitAdapter:
         base = parents[1] if len(parents) > 1 else _empty_tree_oid(self._info)
         # -r recurses into subtrees so we get blob-level entries, matching
         # what diff-index --cached produces for staged changes.
-        args = ["diff-tree", "--raw", "-r", "-z", base, commit_oid]
+        args = ["diff-tree", "--no-renames", "--raw", "-r", "-z", base, commit_oid]
 
         raw = _run(args, cwd=self._info.worktree_dir)
 

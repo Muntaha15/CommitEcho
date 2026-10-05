@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "commitecho": {
+      "command": "commitecho",
+      "args": [
+        "serve"
+      ]
+    }
+  }
+}

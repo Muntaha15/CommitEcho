@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "record_id": "81cee8ad-04fe-4fce-a8f2-981d3dea47dd",
+  "change_id": "faaee332-f26c-4df6-a918-8dfe98a1b1c9",
+  "summary": "Record Claude round 2 remediation evidence, strengthened alternative preservation criteria, and pending live qualification.",
+  "prepared_for": {
+    "parent_oid": "bfa2b5a02e5822f008053161549c5c9c74b332c1",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "03c0a71e7de3bb5568186d1546944fe71ba390049924b3dc0f1ce59ef504714e"
+  },
+  "decisions": [
+    {
+      "decision_id": "02fc8c60-0a1f-459f-a47b-ed53a4d73cc1",
+      "revision_id": "5a015db0-c944-4a7d-89cb-fea4a2e16170",
+      "predecessor_revision_ids": [],
+      "disposition": "proposed",
+      "problem": "Public capability statements and the UAT reports need to reflect the fixes without turning automated checks into live agent qualification.",
+      "choice": "Preserve the supplied report consolidations, append remediation results and strengthened UAT-08 criteria, and keep revised live Claude project/plugin capture pending.",
+      "rationale": "The full suite proves protocol preservation, while Claude is unavailable locally. Exact counts, source state, skipped-test cause/remedy, and outstanding qualification remain explicit.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "README.md",
+          "RELEASE_NOTES.md",
+          "CAPABILITY_LEDGER.md",
+          "CLAUDE_CODE_LIVE_TEST.md",
+          "CLAUDE_CODE_UAT_REPORT.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "3433e97b-b261-4b41-bddb-ef189656226c"
+      ],
+      "captured_at": "2026-10-03T16:46:22.440527Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "3433e97b-b261-4b41-bddb-ef189656226c",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Finished implementation on base 4a1478dbdbb8029cd51e1b92c258b36f2c9c6ea6: full suite 285 passed, 1 skipped in 379.19s; all real MCP stdio handshakes ran. Skipped test_all_client_preflight_rejects_symlink_escaping_repository; separate probe reproduced WinError 1314. Remedy: Windows Developer Mode or elevated shell. git diff --check passed; canonical/plugin skills and exact original v5 fixture matched. Claude absent from PATH and native/npm locations; no revised live Claude run.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-03T16:43:12.305485Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-03T16:46:45.717357Z"
+}

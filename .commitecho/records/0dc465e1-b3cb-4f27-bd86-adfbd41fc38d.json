@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "record_id": "0dc465e1-b3cb-4f27-bd86-adfbd41fc38d",
+  "change_id": "90a9e67f-c257-41e7-b9b5-fee4b7dd4edb",
+  "summary": "Harden client integration boundaries, publish current live-test summaries, exclude local artifacts, and start v0.1.1 development.",
+  "prepared_for": {
+    "parent_oid": "1763d0d4a48d5ae5444ac79afcc3558e316b5f0b",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "dee21d007183ef5c96198d47e907a9c50e67fccc21ccbb8991d15fccacd63fc0"
+  },
+  "decisions": [
+    {
+      "decision_id": "9d1b8653-6591-4a3f-8cc6-37effdd21e3f",
+      "revision_id": "ed904a77-7cef-4dc1-bac1-00fad538ba5e",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "The checkout contains integration repairs, generated local setup, and live-test artifacts that need a reviewed commit.",
+      "choice": "Commit source repairs, regression tests, historical skill fixtures, portable plugin assets, and sanitized root validation reports; extend ignore rules and untrack the personal editor setting.",
+      "rationale": "Source and tests make the repairs reproducible. Public summaries retain observed validation scope while raw fixtures, private databases, machine-specific setup, and credentials remain local. The existing docs and audit-note ignore policy is retained.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          ".gitignore",
+          ".vscode/settings.json",
+          "src/commitecho/git/adapter.py",
+          "src/commitecho/integrations/profiles.py",
+          "src/commitecho/integrations/skill.md",
+          "src/commitecho/transports/cli.py",
+          "tests/integration/test_acceptance.py",
+          "tests/integration/test_hooks.py",
+          "tests/integration/test_plugin_and_lifecycle.py",
+          "tests/integration/test_setup.py",
+          "tests/fixtures/skill-v2.md",
+          "tests/fixtures/skill-v3.md",
+          "commitecho-plugin/skills/commitecho/SKILL.md",
+          "MULTI_CLIENT_INTEGRATION_REVIEW.md",
+          "CODEX_LIVE_TEST.md",
+          "ANTIGRAVITY_LIVE_TEST.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-03T09:40:37.402367Z"
+    },
+    {
+      "decision_id": "d75280b6-13b0-495e-bff6-54c23a79928b",
+      "revision_id": "d8994622-1f99-4465-97ed-8d1c178ef7aa",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "The published v0.1.0 release label does not distinguish subsequent integration work.",
+      "choice": "Mark the current checkout as v0.1.1 in development using Python version 0.1.1.dev0 and plugin SemVer 0.1.1-dev.0; separate unreleased notes from historical v0.1.0 notes.",
+      "rationale": "The user asked whether this work should be the next development patch. Updated README instructions include explicit indexing before recall, observed Codex and Antigravity results, and the remaining documented qualification gaps without changing the published release.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "pyproject.toml",
+          "src/commitecho/__init__.py",
+          "src/commitecho/transports/cli.py",
+          "commitecho-plugin/.claude-plugin/plugin.json",
+          "README.md",
+          "RELEASE_NOTES.md",
+          "CAPABILITY_LEDGER.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-03T09:40:37.402367Z"
+    },
+    {
+      "decision_id": "8c764cab-a706-4c94-bcab-2c1a3fd5732b",
+      "revision_id": "2645e3a8-a59d-4434-93a9-641c975744a6",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "The final development-version tree needs validation before committing the reviewed changes.",
+      "choice": "Commit the reviewed tree after full-suite success and checks of ignore policy, public document links, version metadata, and portable plugin consistency.",
+      "rationale": "The final project-environment suite passed 240 tests with one Windows directory-symlink permission skip. All real MCP checks ran. Independent checks confirmed that private/generated paths remain ignored, portable records remain trackable, the local editor setting remains on disk, and plugin assets match the current development version and canonical skill.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "README.md",
+          "RELEASE_NOTES.md",
+          "CAPABILITY_LEDGER.md",
+          ".gitignore",
+          "tests/integration/test_plugin_and_lifecycle.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "4bd40747-8690-4c51-a72a-5f5dc177182c"
+      ],
+      "captured_at": "2026-10-03T09:46:56.355972Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "4bd40747-8690-4c51-a72a-5f5dc177182c",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Final 0.1.1.dev0 project-environment suite: 240 passed, 1 skipped in 350.41 seconds; all live MCP checks ran with network/local-socket access. One directory-symlink permission test skipped on Windows. git diff --cached --check passed. Version metadata matched 0.1.1.dev0; portable plugin manifest was 0.1.1-dev.0 and its skill matched the canonical bytes. The portable generator dry run skipped all three assets as up to date. Public documentation local links and staged/ignored file policy checks passed.",
+      "locator": null,
+      "client": null,
+      "observed_at": "2026-10-03T09:46:56.355972Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-03T09:47:18.006801Z"
+}

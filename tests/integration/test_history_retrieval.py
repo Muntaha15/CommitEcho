@@ -103,12 +103,14 @@ def test_evidence_links_survive_prepare_and_clone(tmp_path):
     from commitecho.application.retrieve import RetrieveService
 
     repo = _make_repo(tmp_path)
-    git, drafts, _ = _open_services(repo)
+    git, drafts, index = _open_services(repo)
     capture = CaptureService(drafts, git)
     change = capture.begin_change(title="evidence", client="test", operation_id="begin")
     evidence_id = str(uuid.uuid4())
+    alternative = {"choice": "ignore", "disposition": "rejected",
+                   "reason": "Ignoring retries creates duplicate results", "evidence_ids": [evidence_id]}
     decision = {"problem": "retry safety", "choice": "dedupe", "rationale": "same input",
-                "alternatives": [{"choice": "ignore", "evidence_ids": [evidence_id]}]}
+                "alternatives": [alternative]}
 
     with pytest.raises(ValueError, match="does not belong"):
         capture.record_decisions(change_id=change["change_id"], expected_revision=0,
@@ -118,9 +120,12 @@ def test_evidence_links_survive_prepare_and_clone(tmp_path):
         change_id=change["change_id"], expected_revision=0, operation_id="capture",
         decisions=[decision],
         evidence=[{"evidence_id": evidence_id, "kind": "test_result", "origin": "agent_reported",
-                   "content": "retry produced one result"}],
+                   "client": "claude_code", "content": "retry produced one result"}],
     )
     assert result["evidence_ids"] == [evidence_id]
+    stored = drafts.execute("SELECT alternatives FROM decision_revisions WHERE revision_id=?",
+                            (result["revision_ids"][0],)).fetchone()
+    assert json.loads(stored[0]) == [alternative]
 
     other = capture.begin_change(title="other", client="test", operation_id="other")
     with pytest.raises(ValueError, match="does not belong"):
@@ -134,18 +139,32 @@ def test_evidence_links_survive_prepare_and_clone(tmp_path):
         selected_revision_ids=result["revision_ids"], summary="retry safety", operation_id="prepare")
     portable = json.loads((repo / prepared["record_path"]).read_text())
     assert [e["evidence_id"] for e in portable["evidence"]] == [evidence_id]
+    assert portable["decisions"][0]["alternatives"] == [alternative]
     subprocess.run(["git", "add", prepared["record_path"]], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-m", f"retry safety\n\n{prepared['trailer']}"],
                    cwd=repo, check=True, capture_output=True)
+    from commitecho.application.verify import VerifyService
+    assert VerifyService(drafts, index, git).verify_commit(commit_oid=_head(repo))["outcome"] == "exact"
 
     clone = tmp_path / "clone"
     subprocess.run(["git", "clone", str(repo), str(clone)], check=True, capture_output=True)
     clone_git, clone_drafts, clone_index = _open_services(clone)
+    assert clone_drafts.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 0
     _index_commits(clone, clone_git, clone_index, _head(clone))
     retrieve = RetrieveService(clone_drafts, clone_index, clone_git)
     found = retrieve.search_history(question="retry")
     assert evidence_id in found["results"][0]["evidence_ids"]
-    assert retrieve.get_evidence(evidence_id=evidence_id)["content"] == "retry produced one result"
+    record = retrieve.get_evidence(record_id=prepared["record_id"])["record"]
+    assert record["decisions"][0]["alternatives"] == [alternative]
+    evidence = retrieve.get_evidence(evidence_id=evidence_id)
+    assert evidence["found"] is True
+    assert evidence["source"] == "index"
+    assert evidence["content"] == "retry produced one result"
+    assert evidence["origin"] == "agent_reported"
+    assert evidence["client"] == "claude_code"
+    assert evidence["record_id"] == prepared["record_id"]
+    assert evidence["commit_oid"] == _head(clone)
+    assert retrieve.get_evidence(evidence_id="missing") == {"found": False, "evidence_id": "missing"}
 
 
 def test_superseding_revision_link_survives_clone(tmp_path):

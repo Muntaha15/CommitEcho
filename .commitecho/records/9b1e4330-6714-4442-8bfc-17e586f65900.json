@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "record_id": "9b1e4330-6714-4442-8bfc-17e586f65900",
+  "change_id": "89743870-291c-4c38-852b-09f478fe3e72",
+  "summary": "Extend stdio restart coverage to the Antigravity profile and document the follow-up results.",
+  "prepared_for": {
+    "parent_oid": "649aabf086a9ad1d8327590ba2f18a781c8d6ce7",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "7d36a7e114c09c4224a7a670afb0f346df59f8a943920adcb831f0b06c0119ba"
+  },
+  "decisions": [
+    {
+      "decision_id": "8004961a-a8ec-4a17-920d-f04b86434b30",
+      "revision_id": "c1f41ae6-f315-4de3-ada7-b0792802c836",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Retain the reviewed Antigravity follow-up and regression coverage in Git.",
+      "choice": "Parameterize the existing stdio restart lifecycle test for Codex and Antigravity and commit the documentation as requested.",
+      "rationale": "The existing test exercises capture, commit, exact verification, process shutdown, indexing, and recall using generated client profiles. The user asked to defer the review finding about native IDE qualification and commit the changes. Local fixture reports, configuration, databases, and generated files are already ignored.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "tests/integration/test_setup.py",
+          "ANTIGRAVITY_LIVE_TEST.md",
+          "CAPABILITY_LEDGER.md",
+          "README.md",
+          "RELEASE_NOTES.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "7314e023-a0f5-41b2-a2ce-8100d7ae7763"
+      ],
+      "captured_at": "2026-10-03T11:05:11.626447Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "7314e023-a0f5-41b2-a2ce-8100d7ae7763",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "Review validation: full project suite completed with 241 passed and 1 skipped in 339.25 seconds, including live MCP stdio tests. A separate fresh-server SDK check against the saved fixture recovered rationale and one linked assertion evidence item with full coverage. Native IDE-managed restart and native fresh-session recall were not established by that SDK check.",
+      "locator": null,
+      "client": null,
+      "observed_at": "2026-10-03T11:05:11.625447Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-03T11:05:29.569333Z"
+}

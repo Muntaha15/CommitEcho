@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "record_id": "823bc1d7-2e1c-42bc-9682-273b69a76812",
+  "change_id": "78024643-e116-422e-96c9-ff1b139a1233",
+  "summary": "Use durable README version and installation wording before building production artifacts.",
+  "prepared_for": {
+    "parent_oid": "532ef268d385129d39a46e8d9c2ed474ecbf9b40",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "26894a63fc9dcab8d6abde1822b7c332984b5af7336d13a02bfeb6453aac6ea6"
+  },
+  "decisions": [
+    {
+      "decision_id": "d0c21950-28ff-434a-9b2e-1848fb4b0347",
+      "revision_id": "169efd95-3e20-49d3-9d1d-8f95e45e670f",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "The user noticed release-prepared/publication-pending wording in the branch README before production artifact creation.",
+      "choice": "Use the durable version label 0.2.0 and link to PyPI availability instead of embedding temporary publication status; retain source/development installation instructions and publication tracking in release notes.",
+      "rationale": "README is embedded in wheel metadata, so temporary pending text would remain on the package page after upload. Version and an availability link stay accurate before and after publication without asserting an upload happened.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "README.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-05T10:11:15.989608Z"
+    }
+  ],
+  "evidence": [],
+  "created_at": "2026-10-05T10:11:46.382164Z"
+}

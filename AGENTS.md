@@ -11,6 +11,15 @@ uv pip install --python .venv/bin/python -e '.[test]'
 The test suite includes real MCP stdio handshakes, not just in-process tool
 calls. Run the full suite before considering a transport or setup change ready.
 
+When reporting skipped tests, name the test, explain the observed reason, and
+give the remedy. On Windows,
+`test_all_client_preflight_rejects_symlink_escaping_repository` can skip because
+creating its directory symlink requires a privilege (WinError 1314). Enabling
+Windows Developer Mode resolved this for the user: the isolated test passed on
+2026-10-03. In Git Bash use `./.venv/Scripts/python.exe`; PowerShell also accepts
+`.\.venv\Scripts\python.exe`. Keep an isolated rerun result separate from the
+earlier full-suite count; do not report a new full-suite pass without running it.
+
 ## Codex cloud command permissions
 
 Run live MCP tests, the MCP server, and Git remote operations with network access

@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "record_id": "bed006c0-7fbc-4876-a3e2-29ea3e2a41e4",
+  "change_id": "62516207-c167-4979-a8dd-0135c85709b8",
+  "summary": "Streamline integration testing documentation and include the recorded Codex checks alongside Antigravity and Claude Code.",
+  "prepared_for": {
+    "parent_oid": "0c526d57196e28bd53cd04ceb5e25396a552d4b3",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "50c8cb13a2fba275b61755420e44227cc2118a04dcf2ec06daedec5ee376b77c"
+  },
+  "decisions": [
+    {
+      "decision_id": "fb01dcfa-e1a9-4275-be32-4364c8af0d77",
+      "revision_id": "111b8a32-ba93-479a-bd7c-031ec20c7b2f",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "The consolidated integration checklist should include the completed Codex run alongside Antigravity and Claude Code.",
+      "choice": "Add the recorded Codex interactive Windows checks, observed client version, fixture commit, and record ID to the existing checklist.",
+      "rationale": "The developer requested Codex coverage in the checklist. Reusing the recorded 2026-10-03 results makes the shared checklist complete for these three clients without adding another Markdown report. Completed runs retain their original date and tested scope.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "RELEASE_INTEGRATION_CHECKLIST.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "d60b7f58-d91e-4ea8-9fc1-9b5f0092f11b"
+      ],
+      "captured_at": "2026-10-04T10:29:20.991268Z"
+    },
+    {
+      "decision_id": "e1fcd896-60dd-4010-abbc-199b62a09422",
+      "revision_id": "a2889a3a-e35b-412b-98cb-ab1305fa111d",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Retain the focused documentation layout and combine the Codex checklist addition into the existing documentation commit.",
+      "choice": "Keep four public root Markdown files, consolidate client integration status in release notes, retain detailed reports/plans locally under explicit ignore rules, and prepare one new record for the combined documentation changes.",
+      "rationale": "The developer asked to fold this addition into the previous commit and to handle CommitEcho records carefully. Preparing against the original parent and full combined staged changes keeps the rewritten commit's binding accurate. The superseded record is preserved unchanged in a local ignored archive; no older committed records or test evidence are edited.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          ".gitignore",
+          "ANTIGRAVITY_LIVE_TEST.md",
+          "CAPABILITY_LEDGER.md",
+          "CLAUDE_CODE_LIVE_TEST.md",
+          "CLAUDE_CODE_UAT_REPORT.md",
+          "CODEX_LIVE_TEST.md",
+          "MULTI_CLIENT_INTEGRATION_PLAN.md",
+          "MULTI_CLIENT_INTEGRATION_REVIEW.md",
+          "README.md",
+          "RELEASE_INTEGRATION_CHECKLIST.md",
+          "RELEASE_NOTES.md",
+          "RELEASE_UAT_CHECKLIST.md",
+          "V0_2_0_IMPLEMENTATION_PLAN.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "568cf6d6-2f3b-443d-9107-47836c0ea3f4"
+      ],
+      "captured_at": "2026-10-04T10:32:27.631516Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "d60b7f58-d91e-4ea8-9fc1-9b5f0092f11b",
+      "kind": "code_observation",
+      "origin": "agent_reported",
+      "content": "Inspected the retained local Codex live integration report and release-notes summary. The recorded Windows interactive CLI 0.159.0-alpha.12.1 run on 2026-10-03 completed native capture, fixture commit 5b3e0a23879cfcd2084d333b63c3e62edd09e544 with record aef2831c-aeec-43ce-8b8c-c629b352fce0, exact verification, explicit indexing after restart, and fresh-process rationale recall with full coverage. Added these recorded results to the existing checklist; git diff --check passed. No runtime code or test results changed, and no new test run is claimed.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-04T10:29:20.991268Z",
+      "verification_method": null
+    },
+    {
+      "evidence_id": "568cf6d6-2f3b-443d-9107-47836c0ea3f4",
+      "kind": "code_observation",
+      "origin": "agent_reported",
+      "content": "The developer requested combining the Codex checklist addition into the previous documentation commit. The combined staged diff is based on original parent 0c526d57196e28bd53cd04ceb5e25396a552d4b3. Validation confirmed four public root Markdown files, all six local Markdown links/anchors, unchanged runtime/tests/skills/AGENTS.md and existing older records, and an unchanged copy of superseded record eea89ef1-4824-47ac-923e-d86b83d2e726 in an ignored local archive. git diff --cached --check passed. Existing integration-test results were reused; no new test run is claimed.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-04T10:32:27.631516Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-04T10:32:42.218990Z"
+}

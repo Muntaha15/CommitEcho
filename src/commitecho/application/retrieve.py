@@ -8,6 +8,7 @@ import sqlite3
 from typing import Any
 
 from commitecho.git.adapter import GitAdapter
+from commitecho.storage.repository import get_decision_state
 
 
 _DEFAULT_PAGE_SIZE = 20
@@ -416,12 +417,12 @@ class RetrieveService:
 
         open_changes = []
         abandoned_changes = []
-        query = "SELECT change_id, title, status, updated_at FROM changes WHERE status IN ('open', 'prepared', 'abandoned')"
+        query = "SELECT change_id, title, status, updated_at, revision_counter FROM changes WHERE worktree_id = ? AND status IN ('open', 'prepared', 'abandoned')"
+        params = [repo_info.worktree_id]
         if change_id:
             query += " AND change_id = ?"
-            rows = self._drafts.execute(query, (change_id,)).fetchall()
-        else:
-            rows = self._drafts.execute(query).fetchall()
+            params.append(change_id)
+        rows = self._drafts.execute(query, params).fetchall()
 
         for row in rows:
             item = {
@@ -429,7 +430,10 @@ class RetrieveService:
                 "title": row["title"],
                 "status": row["status"],
                 "updated_at": row["updated_at"],
+                "revision_counter": row["revision_counter"],
             }
+            if change_id:
+                item.update(get_decision_state(self._drafts, self._git, change_id, self._index))
             (abandoned_changes if row["status"] == "abandoned" else open_changes).append(item)
 
         indexed_count = self._index.execute(

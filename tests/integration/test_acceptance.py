@@ -1,8 +1,8 @@
 """End-to-end integration acceptance tests.
 
 Each test works through the 7-step acceptance scenario from docs/integrations.md
-§Integration acceptance scenario.  The three "client" variants (codex, antigravity,
-copilot_vscode) share the same underlying service layer; what varies is which
+§Integration acceptance scenario.  The four "client" variants (codex, antigravity,
+copilot_vscode, claude_code) share the same underlying service layer; what varies is which
 client_id token is passed to begin_change and which profile is used for setup.
 
 Steps:
@@ -86,9 +86,9 @@ def _git(args: list[str], repo: Path) -> subprocess.CompletedProcess:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("client_id", ["codex", "antigravity", "copilot_vscode"])
+@pytest.mark.parametrize("client_id", ["codex", "antigravity", "copilot_vscode", "claude_code"])
 class TestAcceptanceScenario:
-    """7-step acceptance scenario executed for each of the three supported clients."""
+    """7-step service-layer scenario for each of the four profile identifiers."""
 
     # ------------------------------------------------------------------
     # Steps 1-3: capture, prepare, commit, verify

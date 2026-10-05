@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "record_id": "4af8d512-769e-4c59-a42a-2ba1a6fc7984",
+  "change_id": "7217aba5-4557-4ce7-8725-4e04408cedcf",
+  "summary": "feat(integrations): implement Phase 0 shared setup and neutral skill",
+  "prepared_for": {
+    "parent_oid": "e7553f642acae5bdb23ced83b3316feff466f4f5",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "f666ed1a97e0ff1bb836b0ebb64f271bd1f6322a4d14f1d5ee0738f3d680e32f"
+  },
+  "decisions": [
+    {
+      "decision_id": "bdf0cb09-7c83-4ae7-892b-1faff87ffae4",
+      "revision_id": "2d83e10d-13dc-4d00-851d-b32df9559603",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "The bundled skill had client-specific defaults (client='antigravity') and version 2, and lacked guidance on client identification across agents and reporting unavailable tools.",
+      "choice": "Update skill.md to version 3 with neutral client identification instructions (codex, antigravity, copilot_vscode, claude_code), tool unavailability warnings, and explicit notice that skill installation does not authorize commits.",
+      "rationale": "A single client-neutral skill avoids identity collisions and doctor template mismatches during sequential multi-client setup.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/integrations/skill.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T09:31:11.100034Z"
+    },
+    {
+      "decision_id": "79b7e026-6367-4f23-8da5-53aa81bc7c8d",
+      "revision_id": "4c560092-3c49-4b15-a468-f1d4915dafd0",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "Codex and Copilot profiles used non-standard skill paths (.codex/skills/commitecho.md, .agents/skills/commitecho.md) and Codex used .codex/AGENTS.md, which is missed by root discovery.",
+      "choice": "Standardize Codex and Copilot on .agents/skills/commitecho/SKILL.md, set Codex instruction_path to root AGENTS.md, and add safe legacy file migration that preserves custom modifications.",
+      "rationale": "Conforms to documented directory-based skill discovery conventions and root AGENTS.md discovery while safely cleaning up known generated legacy files.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/integrations/profiles.py",
+          "src/commitecho/transports/cli.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T09:31:11.100034Z"
+    },
+    {
+      "decision_id": "57cfe40d-5a77-4f9d-9fae-4c054277705e",
+      "revision_id": "4df492fa-e110-40a9-abe4-9445ad1a7e7e",
+      "predecessor_revision_ids": [],
+      "disposition": "selected",
+      "problem": "serve --repo defaulted to '.', defeating environment variable fallbacks; setup opened draft/index databases during dry-run, creating private files unexpectedly.",
+      "choice": "Change serve --repo to default=None to implement strict precedence (explicit --repo -> COMMITECHO_REPO -> CLAUDE_PROJECT_DIR -> cwd discovery), avoid opening databases in setup/dry-run, and add --portable support.",
+      "rationale": "Guarantees reliable stdio server startup in diverse client harnesses without breaking existing explicit paths, and ensures dry-run is truly side-effect free.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          "src/commitecho/transports/cli.py",
+          "src/commitecho/integrations/profiles.py"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-02T09:31:11.101034Z"
+    }
+  ],
+  "evidence": [],
+  "created_at": "2026-10-02T09:40:43.220759Z"
+}
