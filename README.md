@@ -1,10 +1,13 @@
 # CommitEcho
 
+[![CI](https://github.com/Muntaha15/CommitEcho/actions/workflows/ci.yml/badge.svg)](https://github.com/Muntaha15/CommitEcho/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/Muntaha15/CommitEcho/blob/main/LICENSE)
+
 Preserve the decisions behind code changes and recall them through your coding agent.
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.2.0 in development (`0.2.0.dev0`); v0.1.0 is the published release.** This candidate adds Claude setup/plugin generation, an opt-in Git message gate, bounded indexing, and safer setup/cleanup and plugin upgrades. Four local client configuration profiles are available. Antigravity IDE integration checks were accepted by the developer on 2026-10-04. The supplied Claude skill v6 run passed project/plugin capture and recall. The resume and indexing follow-up is implemented with skill v7; the affected native Claude checks remain pending before release. See the [client integration results](RELEASE_NOTES.md#client-integration-testing) and [remaining integration checklist](RELEASE_INTEGRATION_CHECKLIST.md).
+**Status: v0.2.0 release prepared (`0.2.0`); publication pending.** This release adds Claude setup/plugin generation, an opt-in Git message gate, bounded indexing, and safer setup/cleanup and plugin upgrades. Four local client configuration profiles are available. Antigravity IDE integration checks were accepted by the developer on 2026-10-04. The supplied Claude round 4 Windows CLI print-mode run passed all 22 checks at `a9650c5`, skill v7, including project/plugin capture, restart/clone recall, and the resume/runtime retests (F-1 through F-4). Interactive approval, cross-client handoff, hooks, other platforms, and IDE/desktop remain untested. See the [client integration results](https://github.com/Muntaha15/CommitEcho/blob/main/RELEASE_NOTES.md#client-integration-testing) and [release integration checklist](https://github.com/Muntaha15/CommitEcho/blob/main/RELEASE_INTEGRATION_CHECKLIST.md).
 
 Client reports document developer-run integration tests of MCP tools and agent
 workflows. Automated server/protocol results are recorded separately from live
@@ -13,21 +16,21 @@ Codex, Antigravity, and Claude Code sessions.
 ## Install
 
 ```bash
-python -m pip install .
+python -m pip install commitecho
 ```
 
 Or, with [uv](https://github.com/astral-sh/uv) (recommended):
 
 ```bash
 uv venv .venv
-uv pip install --python .venv .
+uv pip install --python .venv commitecho
 ```
 
 Requires Python 3.12+, Git 2.34+, and MCP Python SDK 2.2+ (installed with the package). No external service or model API is needed.
 
 Run commands in that environment: activate it with `source .venv/bin/activate` on POSIX or `./.venv/Scripts/Activate.ps1` in PowerShell. Without activation, use `.venv/bin/python -m commitecho` or `./.venv/Scripts/python.exe -m commitecho` in place of `commitecho`. Setup uses the interpreter that runs it.
 
-These commands install the current development checkout. For the published v0.1.0 source, select its release tag before installing.
+PyPI publication of v0.2.0 is pending; the commands above are the public install path after publication. Until then, install this checkout with `python -m pip install .`. For development use `python -m pip install -e ".[test]"`. See the [PyPI publishing guide](https://github.com/Muntaha15/CommitEcho/blob/main/PUBLISHING.md) for account setup, validation, upload, and verification.
 
 ---
 
@@ -293,7 +296,7 @@ compare `head_oid` with `git rev-parse HEAD` in the intended repository. A start
 status alone is insufficient. If the call fails, inspect trust, approval, and
 launch errors. `doctor` checks static configuration, not live client connectivity.
 
-Shared skill v6 asks agents to supply known client session metadata and to label
+Shared skill v7 asks agents to supply known client session metadata and to label
 each evidence item they author with their active client. Unknown metadata stays
 unset. Setup upgrades exact generated older skills and preserves custom content;
 the plugin generator uses the same recognition rule for its skill asset.
@@ -301,7 +304,7 @@ the plugin generator uses the same recognition rule for its skill asset.
 Alternatives require `choice` and accept `disposition` (default `rejected`),
 `reason`, and `evidence_ids`. Use decision `rationale` for the selected approach
 and alternative `reason` for its rejection; unknown alternative fields are
-rejected. An omitted reason remains null. Stock v5 skills upgrade to v6;
+rejected. An omitted reason remains null. Stock v6 skills upgrade to v7;
 customized skills remain protected.
 
 ---
@@ -353,7 +356,7 @@ Portable records are limited to 64 KiB, with 4 KiB of inline content per evidenc
 
 ## CommitEcho in this repository
 
-This repository uses CommitEcho to preserve its own development decisions. For example, [commit bf162c5](https://github.com/Muntaha15/CommitEcho/commit/bf162c52e3adacf3f654e49e483eee967f3197f5) includes a [decision record](.commitecho/records/1e604be7-d723-47e0-949c-08d13f1b14fe.json) explaining why we added a complete MCP stdio lifecycle test: existing transport tests checked startup and status, while lifecycle tests called services directly.
+This repository uses CommitEcho to preserve its own development decisions. For example, [commit bf162c5](https://github.com/Muntaha15/CommitEcho/commit/bf162c52e3adacf3f654e49e483eee967f3197f5) includes a [decision record](https://github.com/Muntaha15/CommitEcho/blob/main/.commitecho/records/1e604be7-d723-47e0-949c-08d13f1b14fe.json) explaining why we added a complete MCP stdio lifecycle test: existing transport tests checked startup and status, while lifecycle tests called services directly.
 
 After cloning this repository and installing CommitEcho, inspect the recorded decision and evidence:
 
@@ -408,7 +411,7 @@ python -m pytest
 
 Pytest builds isolated fixture repositories and runs both deterministic evaluation modules. The baseline comparison checks recorded context, not answer quality.
 
-Use the project environment for development (`uv pip install --python .venv -e ".[test]"`). The suite includes real MCP stdio handshakes; restricted command sandboxes need local-socket/network permission as described in [AGENTS.md](AGENTS.md).
+Use the project environment for development (`uv pip install --python .venv -e ".[test]"`). The suite includes real MCP stdio handshakes; restricted command sandboxes need local-socket/network permission as described in [AGENTS.md](https://github.com/Muntaha15/CommitEcho/blob/main/AGENTS.md).
 
 ---
 
@@ -420,3 +423,12 @@ The initial v0.1.0 release includes automated fixture validation and limited liv
 2. **All records recover in a fresh full clone** — `commitecho index` on a clone of any fixture repo populates the search index and `search_history` returns the expected decisions.
 3. **No branch/future-decision leakage** — `search_history` at a given `at_ref` does not surface decisions from commits unreachable from that ref.
 4. **All four client workflows pass with recorded versions** — `commitecho setup --client <client>` for each of `codex`, `antigravity`, `copilot_vscode`, `claude_code` produces valid configuration and the acceptance scenario passes in the actual client. Service-layer client-ID tests and MCP protocol tests establish separate, narrower facts.
+
+## License and CI
+
+CommitEcho is distributed under the [MIT license](https://github.com/Muntaha15/CommitEcho/blob/main/LICENSE). GitHub Actions runs
+the full pytest suite, including fixture evaluations and real MCP stdio
+handshakes, on pull requests and pushes for Windows and Linux with Python 3.12
+and minimum/latest supported MCP dependencies. The badge reports the remote
+workflow result once these changes are pushed; local validation is recorded in
+the [release notes](https://github.com/Muntaha15/CommitEcho/blob/main/RELEASE_NOTES.md).

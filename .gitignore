@@ -1,6 +1,11 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 .test-tmp*/
 .venv/
 *.egg-info/
@@ -9,6 +14,7 @@ dist/
 tests/fixtures/repos/
 tests/fixtures/fixture_manifest.json
 AUDIT_ACTIONS.md
+/tests/debug_baseline.py
 
 # Local development plans and detailed integration reports
 /ANTIGRAVITY_IDE_INTEGRATION_REPORT.md
@@ -17,6 +23,7 @@ AUDIT_ACTIONS.md
 /CLAUDE_CODE_INTEGRATION_ACTION_PLAN.md
 /CLAUDE_CODE_INTEGRATION_REPORT.md
 /CLAUDE_CODE_LIVE_TEST.md
+/CLAUDE_CODE_*_latest.md
 /CODEX_LIVE_TEST.md
 /MULTI_CLIENT_INTEGRATION_PLAN.md
 /MULTI_CLIENT_INTEGRATION_REVIEW.md
@@ -27,6 +34,7 @@ docs/
 .agents/
 .codex/
 .vscode/
+.antigravitycli/
 .claude/
 /.mcp.json
 /CLAUDE.md
@@ -37,6 +45,8 @@ docs/
 # Local credentials; retain intentionally published examples
 .env
 .env.*
+/.aws/
+/.pypirc
 !.env.example
 
 # Local CommitEcho files; published decision records belong in Git

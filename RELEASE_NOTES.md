@@ -1,19 +1,58 @@
 # CommitEcho release notes
 
-## v0.2.0 - in development
+## v0.2.0 - release prepared 2026-10-04
 
-Package version: `0.2.0.dev0`; portable plugin: `0.2.0-dev.0`. This candidate
-has not been released. v0.1.0 remains the published release.
+Package version: `0.2.0`; portable plugin: `0.2.0`; shared skill v7.
+Release artifacts are prepared locally; tagging and publication remain pending.
+The final artifact changes release/package metadata from the Claude-qualified
+`a9650c5` candidate and adds the MIT license, PR CI, and PyPI publishing guide;
+product behavior and skill content are unchanged. Dated validation
+below retains the original candidate versions and environments.
 
 The feature release includes Claude Code setup/plugin generation, opt-in Git
 message validation and hook management, bounded indexing, and shared skill v7.
-The prior `0.1.1.dev0` milestones below are included in this candidate.
+The prior `0.1.1.dev0` milestones below are included in this release.
+
+PyPI distribution is prepared with SPDX MIT metadata, a packaged root license,
+project URLs, and a public `pip install commitecho` installation path. See
+[PUBLISHING.md](PUBLISHING.md) for first-upload credentials, optional TestPyPI
+rehearsal, production upload, and installed-package verification.
+GitHub Actions CI is configured on pushes and pull requests for Windows/Linux
+and minimum/latest MCP dependencies. Full pytest includes fixture evaluations
+and live MCP stdio checks; hosted CI execution is pending a branch push.
 
 Release-review repairs close R1-R4: legacy skill cleanup and Claude settings
 cleanup reject paths outside the selected repository; combined hook uninstall
 preflights both targets; stock plugin manifests upgrade across package versions
 while customized assets remain protected. No dependency or storage migration
 is added. Native lifecycle installation remains gated.
+
+### Final release validation - 2026-10-04
+
+The final `0.2.0` project environment passed **421 tests, 0 skipped in
+969.64 seconds**, Windows, Python 3.12.14, pytest 9.1.1, MCP 2.2.0. This includes
+fixture evaluations, real MCP stdio, setup ownership boundaries, plugin upgrades,
+and publication recovery. No earlier isolated or supplied run is counted here.
+The wheel and source archive build with Hatchling 1.32.4 and pass strict Twine
+metadata/description validation. Their license, canonical skill v7, portable
+plugin metadata, project URLs, and exclusion of private local files were checked.
+
+Fresh installed-wheel validation on MCP **2.3.0** passed **15 tests, 0 skipped
+in 86.81 seconds**, using imports from fresh environment site-packages outside
+the source import path and without `PYTHONPATH`: four generated client launches,
+three capture/commit/verify/index/restart/Git-only clone lifecycles, local/portable
+plugin launches, and six stock-manifest upgrade cases including development to
+`0.2.0`. CLI version/help/init/setup/doctor also passed. This is a focused artifact
+run, not a full MCP 2.3.0 suite. The first concurrent artifact run had four MCP
+initialization timeouts (5 passed, 4 failed); the separate rerun passed without
+changing product code or handshake timeouts.
+Native Claude loading of the final `0.2.0` metadata is untested on this host
+because Claude CLI is unavailable. The supplied native round 4 qualification
+covers the same product code and skill v7 at `a9650c5`; the release adds package
+metadata, licensing, documentation, and CI. Hosted GitHub CI and actual PyPI
+upload/install remain pending their external execution.
+
+### Earlier candidate validation
 
 Local candidate validation on 2026-10-04: **377 passed, 9 skipped in 526.09
 seconds**, Windows, Python 3.12.14, MCP SDK 2.2.0. All real MCP stdio checks
@@ -45,7 +84,7 @@ server/protocol results retain their separate scopes.
 |---|---|
 | Codex | Windows interactive CLI capture, fixture commit, exact verification, indexing, and fresh-process recall passed on 2026-10-03. |
 | Antigravity IDE | The developer accepted the live Phase 1/2 results and automated fixture checks for this candidate on 2026-10-04, including capture, exact verification, indexing, restart recovery, fresh-chat recall, and a linked worktree with spaces. |
-| Claude Code | The supplied 2026-10-04 Windows print-mode run passed skill v6 project/plugin-only capture, exact verification, and restart/clone recall. Its resume/runtime findings (F-1/F-2) are now addressed in code and protocol regressions; affected native checks with skill v7 remain pending before release. |
+| Claude Code | Supplied round 4 on 2026-10-04 passed 22/22 checks at `a9650c5`, skill v7: Windows CLI 2.1.286 print-mode project/plugin capture, exact verification, server-runtime indexing, resume and fresh-process/Git-only clone recall. Native F-1 through F-4 retests passed; interactive approval, handoff, hooks and other surfaces remain untested. |
 | Copilot VS Code | Generated configuration and protocol checks are covered; interactive client checks remain pending. |
 
 The live Antigravity fixture commit is
@@ -88,7 +127,7 @@ passed. Earlier full-suite and isolated results above retain their original coun
 Antigravity CLI, other platforms, cross-client handoff, and native lifecycle
 hooks are separate follow-up checks for the scoped Windows release. The
 [remaining integration checklist](RELEASE_INTEGRATION_CHECKLIST.md) tracks
-the affected Claude retests. Detailed reports and development
+remaining client/platform qualification. Detailed reports and development
 plans stay local; this summary and the checklist are the public status record.
 
 Publication recovery follow-up (2026-10-04): exact local verification is now
@@ -105,6 +144,16 @@ Recovery validation on `800a65d` plus these changes: **421 passed, 0 skipped in
 All real MCP stdio tests ran. The independent review found no additional
 actionable issues. The earlier long-root run and its fixture failures are
 recorded separately in the local Claude report.
+
+### Claude Code round 4 acceptance - 2026-10-04
+
+The final supplied run tested a clean fresh clone of `origin/multi-client-integration` at `a9650c5`, package `0.2.0.dev0`, skill v7, Claude CLI 2.1.286 / `claude-opus-5-5`, Windows 11 x64, Python 3.12.10, MCP 2.3.0 and Git 2.42.0.windows.2. All 22 checks passed across ten live print-mode sessions, with no new defects. This supersedes the historical native-retest pending statements above for that surface; consolidation did not rerun the client or suite.
+
+F-1: the resumed process committed both decisions and retained the earlier rejected alternative, with no omitted/remaining revisions. Project new-process/clone recall returned all four decisions and both alternatives with reasons, evidence IDs and original provenance. F-2: plugin indexing used the server runtime. F-3: all 19 supplied IDs came from UUID generation. F-4: regeneration named both runtimes and the remedy while preserving files. Plugin validation, stock pinned/portable upgrades, custom-asset protection, PATH connection/failure handling, atomic malformed-input rejection and cp1252 help passed. Fixture commits: project `3101fb2`, `cbb62e0`; plugin `767607b`.
+
+Reported fresh-clone full suite: **412 passed, 9 skipped in 340.8 seconds**. `tests/integration/test_setup.py::test_all_client_preflight_rejects_symlink_escaping_repository` and eight `test_setup_rejects_external_legacy_file_symlink_before_writes` cases (two paths, four flag combinations) skipped due to WinError 1314 creating symlinks. Enable Windows Developer Mode or use an elevated shell and rerun those nine tests. Earlier same-day supplied `800a65d` run: **394 passed, 9 skipped**, same reason/remedy. Neither count replaces the independent **421 passed, 0 skipped** recovery result or the earlier isolated symlink pass.
+
+Remaining observations: resume omitted `client_version` while retaining correct attribution; a co-author line after the record trailer still verified exact. Interactive approval, cross-client handoff, deliberate native partial selection, broader portable project workflow, SessionStart, Linux/macOS and IDE/desktop remain untested. Raw evidence remains private on the reporting checkout; the detailed report and summary were consolidated locally. The candidate remains unreleased.
 
 ## v0.1.1 development milestones - superseded by v0.2.0
 

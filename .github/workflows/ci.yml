@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: pytest + evals (${{ matrix.os }}, ${{ matrix.sdk }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        sdk: [minimum, latest]
+        include:
+          - os: ubuntu-latest
+            python: .venv/bin/python
+          - os: windows-latest
+            python: .venv/Scripts/python.exe
+          - sdk: minimum
+            mcp: mcp==2.2.0
+          - sdk: latest
+            mcp: mcp>=2.2.0,<3
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install uv
+          uv venv .venv
+          uv pip install --python '${{ matrix.python }}' -e '.[test]' '${{ matrix.mcp }}'
+      # tests/test_eval_gate.py builds isolated fixtures and checks both eval runners.
+      - name: Run pytest, fixture evals, and real MCP stdio handshakes
+        run: ${{ matrix.python }} -m pytest -q -rs --basetemp=.test-tmp-ci

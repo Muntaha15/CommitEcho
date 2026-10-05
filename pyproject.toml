@@ -1,20 +1,26 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
 name = "commitecho"
-version = "0.2.0.dev0"
+version = "0.2.0"
 description = "Preserve the decisions behind code changes and recall them through your coding agent."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "mcp>=2.2.0,<3",
     "pydantic>=2.9.0",
     "click>=8.1.0",
     "tomlkit>=0.13.0,<1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Muntaha15/CommitEcho"
+Repository = "https://github.com/Muntaha15/CommitEcho"
+Issues = "https://github.com/Muntaha15/CommitEcho/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8.0", "pytest-asyncio>=0.24"]
