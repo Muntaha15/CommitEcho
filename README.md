@@ -7,7 +7,7 @@ Preserve the decisions behind code changes and recall them through your coding a
 
 CommitEcho is a local MCP server. During development, your coding agent records the problem, choices, alternatives, and reasons discussed with you. Selected records travel with the resulting Git commits, so another agent can explain a change months later.
 
-**Status: v0.2.0 release prepared (`0.2.0`); publication pending.** This release adds Claude setup/plugin generation, an opt-in Git message gate, bounded indexing, and safer setup/cleanup and plugin upgrades. Four local client configuration profiles are available. Antigravity IDE integration checks were accepted by the developer on 2026-10-04. The supplied Claude round 4 Windows CLI print-mode run passed all 22 checks at `a9650c5`, skill v7, including project/plugin capture, restart/clone recall, and the resume/runtime retests (F-1 through F-4). Interactive approval, cross-client handoff, hooks, other platforms, and IDE/desktop remain untested. See the [client integration results](https://github.com/Muntaha15/CommitEcho/blob/main/RELEASE_NOTES.md#client-integration-testing) and [release integration checklist](https://github.com/Muntaha15/CommitEcho/blob/main/RELEASE_INTEGRATION_CHECKLIST.md).
+**Version: `0.2.0`.** This release adds Claude setup/plugin generation, an opt-in Git message gate, bounded indexing, and safer setup/cleanup and plugin upgrades. Four local client configuration profiles are available. Antigravity IDE integration checks were accepted by the developer on 2026-10-04. The supplied Claude round 4 Windows CLI print-mode run passed all 22 checks at `a9650c5`, skill v7, including project/plugin capture, restart/clone recall, and the resume/runtime retests (F-1 through F-4). Interactive approval, cross-client handoff, hooks, other platforms, and IDE/desktop remain untested. See the [client integration results](https://github.com/Muntaha15/CommitEcho/blob/main/RELEASE_NOTES.md#client-integration-testing) and [release integration checklist](https://github.com/Muntaha15/CommitEcho/blob/main/RELEASE_INTEGRATION_CHECKLIST.md).
 
 Client reports document developer-run integration tests of MCP tools and agent
 workflows. Automated server/protocol results are recorded separately from live
@@ -30,7 +30,7 @@ Requires Python 3.12+, Git 2.34+, and MCP Python SDK 2.2+ (installed with the pa
 
 Run commands in that environment: activate it with `source .venv/bin/activate` on POSIX or `./.venv/Scripts/Activate.ps1` in PowerShell. Without activation, use `.venv/bin/python -m commitecho` or `./.venv/Scripts/python.exe -m commitecho` in place of `commitecho`. Setup uses the interpreter that runs it.
 
-PyPI publication of v0.2.0 is pending; the commands above are the public install path after publication. Until then, install this checkout with `python -m pip install .`. For development use `python -m pip install -e ".[test]"`. See the [PyPI publishing guide](https://github.com/Muntaha15/CommitEcho/blob/main/PUBLISHING.md) for account setup, validation, upload, and verification.
+See [PyPI](https://pypi.org/project/commitecho/) for available releases. To install from a source checkout, use `python -m pip install .`. For development use `python -m pip install -e ".[test]"`. See the [PyPI publishing guide](https://github.com/Muntaha15/CommitEcho/blob/main/PUBLISHING.md) for account setup, validation, upload, and verification.
 
 ---
 
