@@ -17,6 +17,7 @@ AUDIT_ACTIONS.md
 /tests/debug_baseline.py
 
 # Local development plans and detailed integration reports
+/PUBLISHING.md
 /ANTIGRAVITY_IDE_INTEGRATION_REPORT.md
 /ANTIGRAVITY_LIVE_TEST.md
 /CAPABILITY_LEDGER.md

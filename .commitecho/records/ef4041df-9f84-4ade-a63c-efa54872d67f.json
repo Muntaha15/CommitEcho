@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "record_id": "ef4041df-9f84-4ade-a63c-efa54872d67f",
+  "change_id": "a7524281-21d6-4cbb-8fb3-bdf6b0401030",
+  "summary": "Keep release working notes local and update public documentation references.",
+  "prepared_for": {
+    "parent_oid": "e16288438171fe9bc05928c432631c6c7ffbc6bb",
+    "object_format": "sha1",
+    "manifest_version": 1,
+    "code_manifest_sha256": "a05293848f111e5b8ec85650d50ddab09a49234b970fa4b166b9b49eaaeb0b0b"
+  },
+  "decisions": [
+    {
+      "decision_id": "6b50b8b5-9562-4005-9716-a36e9434b013",
+      "revision_id": "9d429858-edfa-4e1c-8f8d-f090f5d084e3",
+      "predecessor_revision_ids": [
+        "d41b9430-bd6b-47d1-b7a9-7eb6710f72ca"
+      ],
+      "disposition": "selected",
+      "problem": "Release working notes and public project documentation serve different audiences.",
+      "choice": "Keep the publishing working notes in the existing ignored docs directory, remove the tracked copy and its public links, and ignore the original root path.",
+      "rationale": "This keeps public documentation focused on installation and supported workflows while retaining the working reference locally. The existing local-document convention covers the change without altering runtime behavior.",
+      "alternatives": [
+        {
+          "choice": "Rewrite repository history to remove the document from older revisions.",
+          "disposition": "rejected",
+          "reason": "The current documentation cleanup preserves existing commit identifiers and bindings. Historical removal remains a separate decision.",
+          "evidence_ids": []
+        }
+      ],
+      "code_scope": {
+        "paths": [
+          ".gitignore",
+          "PUBLISHING.md",
+          "README.md",
+          "RELEASE_NOTES.md",
+          "RELEASE_INTEGRATION_CHECKLIST.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [],
+      "captured_at": "2026-10-06T16:02:24.517631Z"
+    },
+    {
+      "decision_id": "53be40d1-86fd-457f-aa73-4394411f69f5",
+      "revision_id": "55362aeb-b28b-4b69-a4f6-f75e27565c9d",
+      "predecessor_revision_ids": [
+        "a7efb914-e5ff-4a8f-932f-719b3d9f0e04"
+      ],
+      "disposition": "selected",
+      "problem": "Confirm that the documentation update preserves the local working reference and produces clean distributions.",
+      "choice": "Compare the retained document with the original, rebuild the source archive and wheel, inspect their contents, and run strict Twine validation.",
+      "rationale": "These checks directly cover the documentation and packaging scope. Runtime, transport, and setup code are unchanged.",
+      "alternatives": [],
+      "code_scope": {
+        "paths": [
+          ".gitignore",
+          "PUBLISHING.md",
+          "README.md",
+          "RELEASE_NOTES.md",
+          "RELEASE_INTEGRATION_CHECKLIST.md"
+        ],
+        "base_blob_oid": null,
+        "line_ranges": null,
+        "symbol_label": null
+      },
+      "evidence_ids": [
+        "b456fe52-3cb7-4145-834e-d7a1d9abc3bb"
+      ],
+      "captured_at": "2026-10-06T16:02:24.517631Z"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "b456fe52-3cb7-4145-834e-d7a1d9abc3bb",
+      "kind": "test_result",
+      "origin": "agent_reported",
+      "content": "The retained local document matches the original content, allowing checkout newline differences. Both review distributions built successfully; the source archive and wheel exclude PUBLISHING.md and the reviewed conversation marker. The source archive excludes docs/ and includes the license and canonical skill. Both distributions pass strict Twine checks, and git diff --check passes. The full runtime test suite was not rerun for this documentation-only update.",
+      "locator": null,
+      "client": "codex",
+      "observed_at": "2026-10-06T16:02:24.517631Z",
+      "verification_method": null
+    }
+  ],
+  "created_at": "2026-10-06T16:02:42.595894Z"
+}

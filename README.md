@@ -30,7 +30,7 @@ Requires Python 3.12+, Git 2.34+, and MCP Python SDK 2.2+ (installed with the pa
 
 Run commands in that environment: activate it with `source .venv/bin/activate` on POSIX or `./.venv/Scripts/Activate.ps1` in PowerShell. Without activation, use `.venv/bin/python -m commitecho` or `./.venv/Scripts/python.exe -m commitecho` in place of `commitecho`. Setup uses the interpreter that runs it.
 
-See [PyPI](https://pypi.org/project/commitecho/) for available releases. To install from a source checkout, use `python -m pip install .`. For development use `python -m pip install -e ".[test]"`. See the [PyPI publishing guide](https://github.com/Muntaha15/CommitEcho/blob/main/PUBLISHING.md) for account setup, validation, upload, and verification.
+See [PyPI](https://pypi.org/project/commitecho/) for available releases. To install from a source checkout, use `python -m pip install .`. For development use `python -m pip install -e ".[test]"`.
 
 ---
 

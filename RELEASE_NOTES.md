@@ -5,7 +5,7 @@
 Package version: `0.2.0`; portable plugin: `0.2.0`; shared skill v7.
 Release artifacts are prepared locally; tagging and publication remain pending.
 The final artifact changes release/package metadata from the Claude-qualified
-`a9650c5` candidate and adds the MIT license, PR CI, and PyPI publishing guide;
+`a9650c5` candidate and adds the MIT license and PR CI;
 product behavior and skill content are unchanged. Dated validation
 below retains the original candidate versions and environments.
 
@@ -14,9 +14,7 @@ message validation and hook management, bounded indexing, and shared skill v7.
 The prior `0.1.1.dev0` milestones below are included in this release.
 
 PyPI distribution is prepared with SPDX MIT metadata, a packaged root license,
-project URLs, and a public `pip install commitecho` installation path. See
-[PUBLISHING.md](PUBLISHING.md) for first-upload credentials, optional TestPyPI
-rehearsal, production upload, and installed-package verification.
+project URLs, and a public `pip install commitecho` installation path.
 GitHub Actions CI is configured on pushes and pull requests for Windows/Linux
 and minimum/latest MCP dependencies. Full pytest includes fixture evaluations
 and live MCP stdio checks; hosted CI execution is pending a branch push.
