@@ -99,7 +99,6 @@ reruns. Do not infer an untested client/platform pass from another surface.
 - [x] Wheel/source archive build; strict Twine checks and packaged MIT license/skill/private-file audit pass.
 - [x] Fresh installed wheel on MCP 2.3.0: 15 checks passed, zero skips in 86.81 seconds; all client/plugin launches, restart/clone lifecycles, and final-version upgrades. CLI smoke checks pass.
 - [x] Visible MIT license, CI badge, and PR/push workflow for Windows/Linux with minimum/latest MCP are prepared.
-- [x] PyPI account/token, rehearsal, upload, and verification steps are documented in [PUBLISHING.md](PUBLISHING.md).
 - [ ] Hosted GitHub CI: run after authorized branch push; no remote pass is claimed.
 - [ ] Final-version native Claude plugin loading: CLI unavailable here; supplied round 4 covers unchanged product code/skill.
 - [ ] PyPI upload, clean public installation, release tag, and GitHub release: publication remains pending.
